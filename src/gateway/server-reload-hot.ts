@@ -196,7 +196,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
         );
         params.setState(nextState);
         if (reloadPlanChangesAgentResolution(plan)) {
-          state.cronState.cron.completeConfigAdoption();
+          state.cronState.cron.completeConfigAdoption(nextConfig);
         }
         // All rejecting work is complete. Publish pre-resolved lane limits at
         // the final synchronous commit edge, alongside the accepted state.

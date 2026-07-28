@@ -651,6 +651,7 @@ export function loadedCronStoreFromRows(rows: CronJobRow[], storeEpoch = 0): Loa
     storeEpoch,
     configJobs,
     configJobIndexes: rows.map((_row, index) => index),
+    legacyImportedJobIndexes: [],
     configJobRuntimeEntries,
     invalidConfigRows: [],
   };

@@ -95,6 +95,7 @@ export async function loadCronJobsStoreWithConfigJobs(
     storeEpoch,
     configJobs: [],
     configJobIndexes: [],
+    legacyImportedJobIndexes: [],
     configJobRuntimeEntries: [],
     invalidConfigRows: [],
   };
@@ -106,6 +107,7 @@ function emptyLoadedCronStore(storeEpoch = 0): LoadedCronStore {
     storeEpoch,
     configJobs: [],
     configJobIndexes: [],
+    legacyImportedJobIndexes: [],
     configJobRuntimeEntries: [],
     invalidConfigRows: [],
   };
