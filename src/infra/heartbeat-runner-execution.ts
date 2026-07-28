@@ -75,6 +75,7 @@ import {
   resolveStaleHeartbeatIsolatedSessionKey,
 } from "./heartbeat-runner-session.js";
 import { isHeartbeatEnabledForAgent, resolveHeartbeatIntervalMs } from "./heartbeat-summary.js";
+import { consumeHeartbeatSystemEventEntriesBySource } from "./heartbeat-system-event-consumption.js";
 import { resolveHeartbeatVisibility } from "./heartbeat-visibility.js";
 import {
   inferHeartbeatWakeSourceFromReason,
@@ -94,7 +95,6 @@ import {
   resolveHeartbeatDeliveryTargetWithSessionRoute,
   resolveHeartbeatSenderContext,
 } from "./outbound/targets.js";
-import { consumeSelectedSystemEventEntriesBySource } from "./system-events.js";
 
 const log = heartbeatLog;
 
@@ -440,7 +440,7 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
       hasCronEvents: heartbeatRunPrompt.hasCronEvents,
     });
     if (shouldConsumeInspectedEvents && inspectedSystemEventsToConsume.length > 0) {
-      consumeSelectedSystemEventEntriesBySource(sessionKey, inspectedSystemEventsToConsume);
+      consumeHeartbeatSystemEventEntriesBySource(sessionKey, inspectedSystemEventsToConsume);
     }
     return { kind: "skipped", reason: "not-due" } as const;
   }
