@@ -98,14 +98,15 @@ export async function prepareAgentContentPhase(params: {
   if (params.normalizedAttachments.length > 0) {
     let baseProvider: string | undefined;
     let baseModel: string | undefined;
+    let catalogAgentId = agentId;
     let requestedAcpMeta: ReturnType<typeof readAcpSessionMeta>;
     if (params.requestedSessionKeyRaw) {
       const { cfg, entry, canonicalKey } = loadSessionEntry(params.requestedSessionKeyRaw, {
         ...(agentId ? { agentId } : {}),
         clone: false,
       });
-      const sessionAgentId =
-        canonicalKey === "global" && agentId ? agentId : resolveAgentIdFromSessionKey(canonicalKey);
+      const sessionAgentId = resolveAgentIdFromSessionKey(canonicalKey, agentId);
+      catalogAgentId = sessionAgentId;
       const modelRef = resolveSessionModelRef(cfg, entry, sessionAgentId);
       baseProvider = modelRef.provider;
       baseModel = modelRef.model;
@@ -119,6 +120,7 @@ export async function prepareAgentContentPhase(params: {
       ? true
       : await resolveGatewayModelSupportsImages({
           loadGatewayModelCatalog: params.context.loadGatewayModelCatalog,
+          agentId: catalogAgentId,
           provider: params.providerOverride || baseProvider,
           model: params.modelOverride || baseModel,
         });

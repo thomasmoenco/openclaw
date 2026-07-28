@@ -176,29 +176,31 @@ function resolveConfiguredAgentMainSessionKey(params: {
 
 function isConfiguredAgentMainSessionKey(params: {
   cfg: OpenClawConfig;
+  agentId?: string;
   sessionKey: string;
   mainKey: string;
 }): boolean {
   if (isUnscopedSessionKeySentinel(params.sessionKey)) {
     return false;
   }
-  const agentId = resolveAgentIdFromSessionKey(
-    params.sessionKey,
-    tryResolveSoleAgentId(params.cfg),
-  );
+  const agentId =
+    params.agentId ??
+    resolveAgentIdFromSessionKey(params.sessionKey, tryResolveSoleAgentId(params.cfg));
   return (
+    params.sessionKey === params.mainKey ||
     params.sessionKey ===
-    resolveConfiguredAgentMainSessionKey({
-      cfg: params.cfg,
-      agentId,
-      mainKey: params.mainKey,
-    })
+      resolveConfiguredAgentMainSessionKey({
+        cfg: params.cfg,
+        agentId,
+        mainKey: params.mainKey,
+      })
   );
 }
 
 async function ensureConfiguredAgentMainSession(params: {
   cfg: OpenClawConfig;
   callGateway: GatewayCaller;
+  agentId?: string;
   sessionKey: string;
   mainKey: string;
   requesterSessionKey?: string;
@@ -207,17 +209,21 @@ async function ensureConfiguredAgentMainSession(params: {
   if (
     !isConfiguredAgentMainSessionKey({
       cfg: params.cfg,
+      ...(params.agentId ? { agentId: params.agentId } : {}),
       sessionKey: params.sessionKey,
       mainKey: params.mainKey,
     })
   ) {
     return { ok: true };
   }
+  const targetAgentId =
+    params.agentId ??
+    resolveAgentIdFromSessionKey(params.sessionKey, tryResolveSoleAgentId(params.cfg));
 
   try {
     await params.callGateway({
       method: "sessions.resolve",
-      params: { key: params.sessionKey },
+      params: { key: params.sessionKey, agentId: targetAgentId },
       timeoutMs: 10_000,
     });
     return { ok: true };
@@ -225,7 +231,7 @@ async function ensureConfiguredAgentMainSession(params: {
     try {
       const createParams = {
         key: params.sessionKey,
-        agentId: resolveAgentIdFromSessionKey(params.sessionKey, tryResolveSoleAgentId(params.cfg)),
+        agentId: targetAgentId,
       };
       if (
         params.useTrustedInProcessCreation &&
@@ -640,8 +646,10 @@ export function createSessionsSendTool(opts?: {
         visibility: sessionVisibility,
         a2aPolicy,
       });
+      // Authorization must use the resolved owner even when the stored key is
+      // bare; otherwise a cross-agent key is interpreted in the requester store.
       const authorizationTargetKey =
-        isUnscopedSessionKeySentinel(resolvedKey) && targetAgentId
+        targetAgentId && !parseAgentSessionKey(resolvedKey)
           ? `agent:${targetAgentId}:${resolvedKey}`
           : resolvedKey;
       const access = visibilityGuard.check(authorizationTargetKey);
@@ -662,6 +670,7 @@ export function createSessionsSendTool(opts?: {
           const ensuredSession = await ensureConfiguredAgentMainSession({
             cfg,
             callGateway: gatewayCall,
+            ...(targetAgentId ? { agentId: targetAgentId } : {}),
             sessionKey: resolvedKey,
             mainKey,
             requesterSessionKey,

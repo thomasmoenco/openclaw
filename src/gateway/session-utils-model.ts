@@ -320,7 +320,11 @@ export function getSessionDefaults(
 }
 
 export async function resolveGatewayModelSupportsImages(params: {
-  loadGatewayModelCatalog: (params?: { readOnly?: boolean }) => Promise<ModelCatalogEntry[]>;
+  loadGatewayModelCatalog: (params?: {
+    agentId?: string;
+    readOnly?: boolean;
+  }) => Promise<ModelCatalogEntry[]>;
+  agentId?: string;
   provider?: string;
   model?: string;
 }): Promise<boolean> {
@@ -329,7 +333,10 @@ export async function resolveGatewayModelSupportsImages(params: {
   }
 
   try {
-    const catalog = await params.loadGatewayModelCatalog({ readOnly: false });
+    const catalog = await params.loadGatewayModelCatalog({
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+      readOnly: false,
+    });
     const modelEntry = findModelCatalogEntry(catalog, {
       provider: params.provider,
       modelId: params.model,
