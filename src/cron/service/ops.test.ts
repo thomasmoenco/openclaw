@@ -18,7 +18,7 @@ import { loadCronJobsStoreWithConfigJobs, loadCronStore, saveCronJobsStore } fro
 import { cronStoreKey } from "../store/key.js";
 import { getCronStoreKysely } from "../store/schema.js";
 import type { CronJob } from "../types.js";
-import { start, stop } from "./ops-lifecycle.js";
+import { reloadForConfigAdoption, start, stop } from "./ops-lifecycle.js";
 import { add, remove, update } from "./ops-mutations.js";
 import { list } from "./ops-read.js";
 import { run } from "./ops-run.js";
@@ -456,6 +456,18 @@ function createMissedIsolatedJob(now: number): CronJob {
   };
 }
 
+function deleteCronJobWithoutEpoch(storePath: string, jobId: string): void {
+  runOpenClawStateWriteTransaction(({ db }) =>
+    executeSqliteQuerySync(
+      db,
+      getCronStoreKysely(db)
+        .deleteFrom("cron_jobs")
+        .where("store_key", "=", cronStoreKey(storePath))
+        .where("job_id", "=", jobId),
+    ),
+  );
+}
+
 describe("cron service ops seam coverage", () => {
   it("materializes a legacy owner after load merges imported jobs", async () => {
     const { storePath } = await makeStorePath();
@@ -500,6 +512,14 @@ describe("cron service ops seam coverage", () => {
       expect(await loadCronStore(storePath)).toMatchObject({
         jobs: [{ id: "legacy-json-import", agentId: "ops" }],
       });
+      expect(state.legacyImportedJobIds).toEqual(new Set());
+
+      deleteCronJobWithoutEpoch(storePath, importedJob.id);
+      await reloadForConfigAdoption(state, {
+        agents: { ownership: "explicit", entries: { ops: {}, research: {} } },
+      });
+      expect(state.store?.jobs).toEqual([]);
+      expect((await loadCronStore(storePath)).jobs).toEqual([]);
     } finally {
       stop(state);
       loadSpy.mockRestore();
@@ -523,15 +543,7 @@ describe("cron service ops seam coverage", () => {
     };
     await saveCronJobsStore(storePath, { version: 1, jobs: [deletedJob] });
     const loadedBeforeDelete = await loadCronJobsStoreWithConfigJobs(storePath);
-    runOpenClawStateWriteTransaction(({ db }) =>
-      executeSqliteQuerySync(
-        db,
-        getCronStoreKysely(db)
-          .deleteFrom("cron_jobs")
-          .where("store_key", "=", cronStoreKey(storePath))
-          .where("job_id", "=", deletedJob.id),
-      ),
-    );
+    deleteCronJobWithoutEpoch(storePath, deletedJob.id);
     const loadSpy = vi
       .spyOn(cronStoreModule, "loadCronJobsStoreWithConfigJobs")
       .mockResolvedValueOnce(loadedBeforeDelete);
