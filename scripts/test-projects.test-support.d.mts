@@ -78,6 +78,7 @@ export function resolveParallelFullSuiteConcurrency(
 
 export function applyFullExtensionsHeapBudget<T extends { config: string; env: NodeJS.ProcessEnv }>(
   specs: T[],
+  params?: { env?: Record<string, string | undefined> },
 ): Array<Omit<T, "env"> & { env: NodeJS.ProcessEnv }>;
 
 export function resolveChangedTargetArgs(

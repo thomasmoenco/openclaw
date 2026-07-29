@@ -4871,7 +4871,8 @@ function ensureMaxOldSpaceSize(nodeOptions, minimumMb) {
   return `${normalized.slice(0, start)}${replacement}${normalized.slice(start + match[0].length)}`;
 }
 
-export function applyFullExtensionsHeapBudget(specs) {
+export function applyFullExtensionsHeapBudget(specs, params = {}) {
+  const baseEnv = params.env ?? {};
   return specs.map((spec) =>
     spec.config === FULL_EXTENSIONS_CONFIG
       ? {
@@ -4879,7 +4880,7 @@ export function applyFullExtensionsHeapBudget(specs) {
           env: {
             ...spec.env,
             NODE_OPTIONS: ensureMaxOldSpaceSize(
-              spec.env?.NODE_OPTIONS,
+              spec.env?.NODE_OPTIONS ?? baseEnv.NODE_OPTIONS,
               FULL_EXTENSIONS_MIN_HEAP_MB,
             ),
           },
