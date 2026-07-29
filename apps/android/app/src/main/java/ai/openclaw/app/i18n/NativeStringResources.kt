@@ -473,6 +473,7 @@ internal val nativeStringResourceIds: Map<String, Int> =
     "Deny" to R.string.native_05a2d7332eb9d8bf,
     "Description" to R.string.native_526e0087cc3f254d,
     "Design system prototype" to R.string.native_f6323e4e7ef2eea2,
+    "Details" to R.string.native_45989de49fb7f66d,
     "Details copied" to R.string.native_e2acabb2202be941,
     "Device ID" to R.string.native_6e0a0b9d8c5ee4d9,
     "Device access; Gateway opt-in still required" to R.string.native_d10fc6ed5d221f2a,

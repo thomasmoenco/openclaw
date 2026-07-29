@@ -2347,10 +2347,19 @@
       ]
     },
     {
+      "locale": "ru",
+      "source": "Details",
+      "translations": [
+        "Подробнее",
+        "Сведения"
+      ]
+    },
+    {
       "locale": "uk",
       "source": "Details",
       "translations": [
         "Відомості",
+        "Деталі",
         "Докладно"
       ]
     },

@@ -7629,6 +7629,11 @@
       "translated": "Widżet niedostępny"
     },
     {
+      "id": "native.android.64997e4b7298eb49",
+      "source": "Details",
+      "translated": "Szczegóły"
+    },
+    {
       "id": "native.android.cd2033b0a82a72dd",
       "source": "$index.",
       "translated": "$index."
@@ -25132,6 +25137,11 @@
       "id": "native.apple.2a03f71557a5b659",
       "source": "Item",
       "translated": "Element"
+    },
+    {
+      "id": "native.apple.15a9bdea318fdc21",
+      "source": "Details",
+      "translated": "Szczegóły"
     },
     {
       "id": "native.apple.769b7dcea4708c40",
