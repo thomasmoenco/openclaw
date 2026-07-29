@@ -24,6 +24,7 @@ import {
 import {
   applyDefaultMultiSpecVitestCachePaths,
   applyDefaultVitestNoOutputTimeout,
+  applyFullExtensionsHeapBudget,
   applyParallelVitestCachePaths,
   buildFullSuiteVitestRunPlans,
   createVitestPreflightPnpmArgs,
@@ -299,7 +300,7 @@ async function main() {
           cwd: process.cwd(),
         });
   const runSpecs = applyDefaultMultiSpecVitestCachePaths(
-    applyDefaultVitestNoOutputTimeout(rawRunSpecs, { env: baseEnv }),
+    applyDefaultVitestNoOutputTimeout(applyFullExtensionsHeapBudget(rawRunSpecs), { env: baseEnv }),
     { cwd: process.cwd(), env: baseEnv },
   );
 
