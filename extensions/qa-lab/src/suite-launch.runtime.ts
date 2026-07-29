@@ -10,6 +10,7 @@ import {
   QA_EVIDENCE_SUMMARY_SCHEMA_VERSION,
   buildQaSuiteEvidenceSummary,
   validateQaEvidenceSummaryJson,
+  type QaEvidenceChannelInput,
   type QaEvidenceSummaryJson,
 } from "./evidence-summary.js";
 import { isQaFastModeEnabled } from "./model-selection.js";
@@ -17,6 +18,7 @@ import { DEFAULT_QA_PROVIDER_MODE } from "./providers/index.js";
 import {
   defaultQaSuiteConcurrencyForTransport,
   normalizeQaTransportId,
+  type QaRealizedTransportAdapter,
 } from "./qa-transport-registry.js";
 import { renderQaMarkdownReport, type QaReportScenario } from "./report.js";
 import { defaultQaModelForMode, normalizeQaProviderMode } from "./run-config.js";
@@ -95,6 +97,7 @@ const CREDENTIAL_POOL_UNAVAILABLE_CODES = new Set(["NO_CREDENTIAL_AVAILABLE", "P
 
 type QaUnifiedPartitionResult = {
   evidenceSummaries: QaEvidenceSummaryJson[];
+  realizedAdapters: QaRealizedTransportAdapter[];
   scenarioResults: Array<{
     result: QaSuiteScenarioResult;
     scenarioId: string;
@@ -102,6 +105,31 @@ type QaUnifiedPartitionResult = {
   startedScenarioIds: readonly string[];
   submittedScenarioIds: readonly string[];
 };
+
+function buildQaEvidenceChannelInput(params: {
+  channelId: string;
+  realizedAdapter?: QaRealizedTransportAdapter;
+  requestedDriver?: string;
+}): QaEvidenceChannelInput {
+  if (params.realizedAdapter) {
+    return {
+      id: params.realizedAdapter.channelId,
+      realization: "realized",
+      driver: params.realizedAdapter.driver,
+      requestedDriver: params.requestedDriver,
+    };
+  }
+  return params.requestedDriver
+    ? {
+        id: params.channelId,
+        realization: "requested",
+        requestedDriver: params.requestedDriver,
+      }
+    : {
+        id: params.channelId,
+        realization: "unknown",
+      };
+}
 
 type QaUnifiedPartitionTask = {
   exclusiveKey?: string;
@@ -612,7 +640,8 @@ function renderUnifiedQaSuiteReport(params: {
 
 async function writeUnifiedQaSuiteArtifacts(params: {
   alternateModel: string;
-  channelDriver: QaSuiteRunParams["channelDriver"];
+  requestedChannelDriver: QaSuiteRunParams["channelDriver"];
+  realizedAdapters: readonly QaRealizedTransportAdapter[];
   concurrency: number;
   evidence: QaEvidenceSummaryJson;
   fastMode: boolean;
@@ -636,7 +665,8 @@ async function writeUnifiedQaSuiteArtifacts(params: {
   });
   const summary = buildQaSuiteSummaryJson({
     alternateModel: params.alternateModel,
-    channelDriver: params.channelDriver,
+    requestedChannelDriver: params.requestedChannelDriver,
+    realizedAdapters: params.realizedAdapters,
     concurrency: params.concurrency,
     evidence: params.evidence,
     fastMode: params.fastMode,
@@ -810,10 +840,16 @@ async function runUnifiedQaSuite(params: {
               buildQaSuiteEvidenceSummary({
                 artifactPaths: [],
                 evidenceMode: params.runParams?.evidenceMode,
-                channelId: channelGroup.channelId ?? transportId,
-                channelDriver:
-                  params.runParams?.channelDriver ??
-                  channelGroup.channelDriverSelection?.channelDriver,
+                channel: buildQaEvidenceChannelInput({
+                  channelId:
+                    channelGroup.channelId ??
+                    channelGroup.channelDriverSelection?.channel ??
+                    channelGroup.channel ??
+                    transportId,
+                  requestedDriver:
+                    params.runParams?.channelDriver ??
+                    channelGroup.channelDriverSelection?.channelDriver,
+                }),
                 env: process.env,
                 generatedAt: new Date().toISOString(),
                 primaryModel,
@@ -823,6 +859,7 @@ async function runUnifiedQaSuite(params: {
                 scenarioResults: blockedResults,
               }),
             ],
+            realizedAdapters: [],
             scenarioResults: partition.scenarios.map((scenario) => ({
               scenarioId: scenario.id,
               result: {
@@ -925,6 +962,7 @@ async function runUnifiedQaSuite(params: {
                   repoRoot,
                 }),
               ],
+              realizedAdapters: [result.realizedAdapter],
               scenarioResults,
               startedScenarioIds: partition.scenarios.map((scenario) => scenario.id),
               submittedScenarioIds: partition.scenarios.map((scenario) => scenario.id),
@@ -997,6 +1035,7 @@ async function runUnifiedQaSuite(params: {
         }
         return {
           evidenceSummaries: testFileEvidenceSummaries,
+          realizedAdapters: [],
           scenarioResults: testFileScenarioResults,
           startedScenarioIds: testFileStartedScenarioIds,
           submittedScenarioIds: [...scenariosByKind.values()].flatMap((scenarios) =>
@@ -1057,8 +1096,11 @@ async function runUnifiedQaSuite(params: {
             buildQaSuiteEvidenceSummary({
               artifactPaths: [],
               evidenceMode: params.runParams?.evidenceMode,
-              channelDriver: params.runParams?.channelDriver,
-              channelId: transportId,
+              channel: buildQaEvidenceChannelInput({
+                channelId: partition.realizedAdapters[0]?.channelId ?? transportId,
+                realizedAdapter: partition.realizedAdapters[0],
+                requestedDriver: params.runParams?.channelDriver,
+              }),
               env: process.env,
               generatedAt: new Date().toISOString(),
               primaryModel,
@@ -1124,6 +1166,7 @@ async function runUnifiedQaSuite(params: {
       ? []
       : await runPartitionTasks(scriptPartitionTasks, 1);
   const partitionResults = [...concurrentPartitionResults, ...scriptPartitionResults];
+  const realizedAdapters = partitionResults.flatMap((partition) => partition.realizedAdapters);
   for (const partitionResult of partitionResults) {
     for (const scenarioResult of partitionResult.scenarioResults) {
       const results = scenarioResultsById.get(scenarioResult.scenarioId) ?? [];
@@ -1162,7 +1205,8 @@ async function runUnifiedQaSuite(params: {
   });
   const unifiedResult = await writeUnifiedQaSuiteArtifacts({
     alternateModel,
-    channelDriver: params.runParams?.channelDriver,
+    requestedChannelDriver: params.runParams?.channelDriver,
+    realizedAdapters,
     concurrency,
     evidence,
     fastMode,

@@ -4,6 +4,7 @@ import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { QaSuiteArtifactError } from "./errors.js";
 import type { QaEvidenceSummaryJson, QaEvidenceTiming } from "./evidence-summary.js";
 import type { QaProviderMode } from "./model-selection.js";
+import type { QaRealizedTransportAdapter } from "./qa-transport-registry.js";
 import type { RuntimeId, RuntimeParityResult } from "./runtime-parity.js";
 import type { QaScorecardChannelDriver } from "./scorecard-taxonomy.js";
 
@@ -58,8 +59,10 @@ export type QaSuiteSummaryJson = {
     alternateModelName: string | null;
     fastMode: boolean;
     concurrency: number;
+    requestedChannelDriver: QaScorecardChannelDriver | null;
     channelDriver: QaScorecardChannelDriver | null;
     channel: string | null;
+    realizedAdapters: QaRealizedTransportAdapter[];
     channelCapabilityMatrixPath: string | null;
     channelDriverSmokePath: string | null;
     scenarioIds: string[] | null;

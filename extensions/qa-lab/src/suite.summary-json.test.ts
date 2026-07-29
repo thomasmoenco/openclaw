@@ -34,8 +34,10 @@ describe("buildQaSuiteSummaryJson", () => {
     expect(json.run.alternateModelName).toBe("gpt-5.6-luna-alt");
     expect(json.run.fastMode).toBe(true);
     expect(json.run.concurrency).toBe(2);
+    expect(json.run.requestedChannelDriver).toBeNull();
     expect(json.run.channelDriver).toBeNull();
     expect(json.run.channel).toBeNull();
+    expect(json.run.realizedAdapters).toEqual([]);
     expect(json.run.channelCapabilityMatrixPath).toBeNull();
     expect(json.run.channelDriverSmokePath).toBeNull();
     expect(json.run.scenarioIds).toBeNull();
@@ -44,6 +46,8 @@ describe("buildQaSuiteSummaryJson", () => {
   it("records Crabline channel-driver metadata when selected", () => {
     const json = buildQaSuiteSummaryJson({
       ...baseParams,
+      requestedChannelDriver: "crabline",
+      realizedAdapters: [{ channelId: "telegram", driver: "crabline" }],
       channelDriverSelection: {
         capabilityMatrixPath: "crabline-fake-provider-capabilities.json",
         channel: "telegram",
@@ -53,6 +57,7 @@ describe("buildQaSuiteSummaryJson", () => {
     });
 
     expect(json.run.channelDriver).toBe("crabline");
+    expect(json.run.requestedChannelDriver).toBe("crabline");
     expect(json.run.channel).toBe("telegram");
     expect(json.run.channelCapabilityMatrixPath).toBe("crabline-fake-provider-capabilities.json");
     expect(json.run.channelDriverSmokePath).toBe("crabline-fake-provider-smoke.json");
@@ -61,11 +66,13 @@ describe("buildQaSuiteSummaryJson", () => {
   it("records declarative non-Crabline channel-driver metadata", () => {
     const json = buildQaSuiteSummaryJson({
       ...baseParams,
-      channelDriver: "live",
+      requestedChannelDriver: "live",
+      realizedAdapters: [{ channelId: "telegram", driver: "live" }],
     });
 
     expect(json.run.channelDriver).toBe("live");
-    expect(json.run.channel).toBeNull();
+    expect(json.run.channel).toBe("telegram");
+    expect(json.run.requestedChannelDriver).toBe("live");
     expect(json.run.channelCapabilityMatrixPath).toBeNull();
     expect(json.run.channelDriverSmokePath).toBeNull();
   });
@@ -170,7 +177,7 @@ describe("buildQaSuiteSummaryJson", () => {
           },
         },
       ],
-      channelId: "qa-channel",
+      channel: { id: "qa-channel", realization: "realized", driver: "qa-channel" },
       generatedAt: "2026-04-11T00:05:00.000Z",
       primaryModel: "mock-openai/gpt-5.6-luna",
       providerMode: "mock-openai",

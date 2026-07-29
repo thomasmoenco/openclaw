@@ -418,6 +418,13 @@ coverage IDs, channel, driver actually used, and result. Channel and driver are
 report dimensions, not additional coverage-ID vocabularies or scenario
 eligibility axes.
 
+Channel evidence with `realization: "realized"` includes the adapter `driver`
+and derived `live` state. If execution is blocked before adapter creation, the
+entry uses `realization: "requested"` with `requestedDriver`, or
+`realization: "unknown"` when no driver was requested; those states do not
+claim a driver or live execution. Suite summary run metadata keeps requested
+driver configuration separate from its `realizedAdapters` list.
+
 For a disposable Linux VM lane without bringing Docker into the QA path, run:
 
 ```bash
