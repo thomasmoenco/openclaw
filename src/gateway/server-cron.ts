@@ -74,7 +74,12 @@ import {
 } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
 import { parseAgentSessionKey } from "../sessions/session-key-utils.js";
-import { createCronExitWatchers, type CronExitResult } from "./cron-exit-watchers.js";
+import {
+  createCronExitWatchers,
+  type CronExitResult,
+  type CronExitWatcherHandlers,
+  type CronExitWatchers,
+} from "./cron-exit-watchers.js";
 import {
   createCronStreamWatchers,
   type CronStreamFireDisposition,
@@ -99,8 +104,11 @@ export type GatewayCronState = {
   cron: GatewayCronServiceContract;
   storePath: string;
   cronEnabled: boolean;
+  exitWatchers?: CronExitWatchers;
+  activateExitWatchers?: () => void;
   reconcileExitWatchers?: () => Promise<void>;
   stopExitWatchers?: () => void;
+  stopCronForHotReload?: () => Promise<void>;
   reconcileStreamWatchers?: () => Promise<void>;
   stopStreamWatchers?: () => Promise<void>;
   reconcileHeartbeatJobs?: (cfg?: OpenClawConfig) => Promise<void>;
@@ -273,6 +281,7 @@ export function buildGatewayCronService(params: {
   deps: CliDeps;
   broadcast: (event: string, payload: unknown, opts?: { dropIfSlow?: boolean }) => void;
   env?: NodeJS.ProcessEnv;
+  exitWatchers?: CronExitWatchers;
 }): GatewayCronState {
   const cronLogger = getChildLogger({ module: "cron" });
   const env = params.env ?? process.env;
@@ -1098,7 +1107,7 @@ export function buildGatewayCronService(params: {
     },
   });
 
-  exitWatchersRef.current = createCronExitWatchers({
+  const exitWatcherHandlers = {
     getProcessSupervisor,
     persistCompletion: async (job) => {
       const completionToken = {};
@@ -1133,7 +1142,13 @@ export function buildGatewayCronService(params: {
       );
     },
     logger: cronLogger,
-  });
+  } satisfies CronExitWatcherHandlers;
+  exitWatchersRef.current = params.exitWatchers ?? createCronExitWatchers(exitWatcherHandlers);
+  const activateExitWatchers = () => {
+    // Do not retarget a live watcher during reload preparation: a rejected
+    // config must leave its callbacks bound to the current scheduler.
+    params.exitWatchers?.updateHandlers(exitWatcherHandlers);
+  };
   const updateCron = cron.update.bind(cron);
   streamWatchersRef.current = createCronStreamWatchers({
     getProcessSupervisor,
@@ -1345,10 +1360,17 @@ export function buildGatewayCronService(params: {
   };
   const automationEpoch = claimSessionAutomationEpoch();
   const stopCron = cron.stop.bind(cron);
-  cron.stop = () => {
+  const stopCronLifecycle = (preserveExitWatchers = false) => {
     try {
       stopCron();
-      stopExitWatchers();
+      if (preserveExitWatchers) {
+        // Retire stale reconciliations without killing children adopted by the
+        // committed replacement scheduler.
+        exitWatchersStopped = true;
+        exitWatcherGeneration += 1;
+      } else {
+        stopExitWatchers();
+      }
       stopHeartbeatReconcileRetry();
       void stopStreamWatchers().catch((err: unknown) => {
         cronLogger.warn(
@@ -1362,8 +1384,11 @@ export function buildGatewayCronService(params: {
       unregisterSessionAutomationSource(automationSource);
     }
   };
-  cron.stopAndDrain = async () => {
-    cron.stop();
+  cron.stop = () => {
+    stopCronLifecycle();
+  };
+  const stopAndDrainCron = async (preserveExitWatchers = false) => {
+    stopCronLifecycle(preserveExitWatchers);
     const streamWatchersStop = stopStreamWatchers().then(
       () => ({ ok: true as const }),
       (error: unknown) => ({ ok: false as const, error }),
@@ -1382,6 +1407,9 @@ export function buildGatewayCronService(params: {
     if (!streamWatchersResult.ok) {
       throw streamWatchersResult.error;
     }
+  };
+  cron.stopAndDrain = async () => {
+    await stopAndDrainCron();
   };
   // Reconciliations serialize on one tail and only the latest requested epoch
   // executes, so an older reload's convergence can never clobber a newer one.
@@ -1463,8 +1491,13 @@ export function buildGatewayCronService(params: {
     cron,
     storePath,
     cronEnabled,
+    exitWatchers: exitWatchersRef.current,
+    activateExitWatchers,
     reconcileExitWatchers,
     stopExitWatchers,
+    stopCronForHotReload: async () => {
+      await stopAndDrainCron(true);
+    },
     reconcileStreamWatchers,
     stopStreamWatchers,
     reconcileHeartbeatJobs,

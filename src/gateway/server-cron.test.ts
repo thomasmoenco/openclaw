@@ -439,6 +439,90 @@ describe("buildGatewayCronService", () => {
     }
   });
 
+  it("transfers a running on-exit watcher to the replacement cron scheduler", async () => {
+    const completion = createDeferred<{
+      reason: "exit";
+      exitCode: number;
+      exitSignal: null;
+      durationMs: number;
+      stdout: string;
+      stderr: string;
+      timedOut: false;
+      noOutputTimedOut: false;
+    }>();
+    const cancel = vi.fn();
+    const cancelScope = vi.fn();
+    const spawn = vi.fn(async () => ({
+      runId: "preserved-cron-exit-watcher",
+      startedAtMs: Date.now(),
+      cancel,
+      wait: () => completion.promise,
+    }));
+    getProcessSupervisorMock.mockReturnValue({ spawn, cancelScope });
+    const cfg = createCronConfig("server-cron-transfer-exit-watcher");
+    loadConfigMock.mockReturnValue(cfg);
+    const initial = buildGatewayCronService({
+      cfg,
+      deps: {} as CliDeps,
+      broadcast: () => {},
+    });
+    let replacement: ReturnType<typeof buildGatewayCronService> | undefined;
+
+    try {
+      const job = await initial.cron.add({
+        name: "preserve watched build",
+        enabled: true,
+        schedule: { kind: "on-exit", command: "sleep 60" },
+        payload: { kind: "systemEvent", text: "done" },
+        sessionTarget: "main",
+        wakeMode: "now",
+      });
+      await initial.reconcileExitWatchers?.();
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
+
+      replacement = buildGatewayCronService({
+        cfg,
+        deps: {} as CliDeps,
+        broadcast: () => {},
+        exitWatchers: initial.exitWatchers,
+      });
+      expect(replacement.exitWatchers).toBe(initial.exitWatchers);
+      replacement.activateExitWatchers?.();
+      await initial.stopCronForHotReload?.();
+      await replacement.cron.start();
+      await replacement.reconcileExitWatchers?.();
+
+      expect(spawn).toHaveBeenCalledOnce();
+      expect(cancel).not.toHaveBeenCalled();
+      expect(cancelScope).not.toHaveBeenCalled();
+      completion.resolve({
+        reason: "exit",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 1,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        noOutputTimedOut: false,
+      });
+      await vi.waitFor(() => expect(replacement?.cron.getJob(job.id)?.enabled).toBe(false));
+      expect(runHeartbeatOnceMock).toHaveBeenCalledOnce();
+      expect(spawn).toHaveBeenCalledOnce();
+    } finally {
+      completion.resolve({
+        reason: "exit",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 1,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        noOutputTimedOut: false,
+      });
+      await (replacement ?? initial).cron.stopAndDrain?.();
+    }
+  });
+
   it("restarts on-exit watchers only after their scheduler successfully restarts", async () => {
     const spawn = vi.fn(async () => {
       const runDone = createDeferred<{

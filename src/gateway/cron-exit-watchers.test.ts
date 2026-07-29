@@ -145,6 +145,41 @@ describe("createCronExitWatchers", () => {
     expect(order).toEqual(["persist", "fire"]);
   });
 
+  it("rebinds an in-flight watcher to the replacement scheduler without rearming it", async () => {
+    const { supervisor, runs } = makeFakeSupervisor();
+    const oldPersistCompletion = vi.fn(async () => {});
+    const oldFireOnExit = vi.fn(async () => {});
+    const newPersistCompletion = vi.fn(async () => {});
+    const newFireOnExit = vi.fn(async () => {});
+    const watchers = createCronExitWatchers({
+      getProcessSupervisor: () => supervisor as never,
+      persistCompletion: oldPersistCompletion,
+      fireOnExit: oldFireOnExit,
+      logger: noopLogger,
+    });
+
+    watchers.reconcile([onExitJob("job-a")]);
+    await flush();
+    watchers.updateHandlers({
+      getProcessSupervisor: () => supervisor as never,
+      persistCompletion: newPersistCompletion,
+      fireOnExit: newFireOnExit,
+      logger: noopLogger,
+    });
+    watchers.reconcile([onExitJob("job-a")]);
+
+    expect(supervisor.spawn).toHaveBeenCalledOnce();
+    expectDefined(runs[0], "runs[0] test invariant").deferred.resolve({
+      exitCode: 0,
+      reason: "exit",
+    });
+    await vi.waitFor(() => expect(newFireOnExit).toHaveBeenCalledOnce());
+    expect(newPersistCompletion).toHaveBeenCalledOnce();
+    expect(oldPersistCompletion).not.toHaveBeenCalled();
+    expect(oldFireOnExit).not.toHaveBeenCalled();
+    expect(supervisor.spawn).toHaveBeenCalledOnce();
+  });
+
   it("a fired job stays unarmed across a simulated restart (disabled in store → not re-run)", async () => {
     // persistCompletion disables the job; after a restart the reconcile sees a
     // disabled job and must NOT re-arm (which would re-run the command).
