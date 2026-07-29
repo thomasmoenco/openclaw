@@ -120,8 +120,9 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
         enabled: reloadPlanChangesAgentResolution(plan),
         nextConfig,
         failureLabel: "gateway hot reload failed",
+        isCurrent: isTransactionCurrent,
       });
-      if (cronAdoption && !isTransactionCurrent()) {
+      if (reloadPlanChangesAgentResolution(plan) && !isTransactionCurrent()) {
         throw new GatewayHotReloadCancelledError();
       }
 
@@ -203,6 +204,9 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
             "prepared model runtime owner is stale before config publication",
             { waitForReplacement: true },
           );
+          if (reloadPlanChangesAgentResolution(plan) && !isTransactionCurrent()) {
+            throw new GatewayHotReloadCancelledError();
+          }
           params.setState(nextState);
           if (reloadPlanChangesAgentResolution(plan)) {
             cronAdoption?.complete();
