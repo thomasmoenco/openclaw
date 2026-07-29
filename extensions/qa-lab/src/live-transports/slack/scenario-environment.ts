@@ -51,7 +51,7 @@ export function createSlackQaScenarioEnvironment(params: {
   const prepareFlow = async (input: FlowPreparationInput) => {
     const scenarioId = input.config.slackScenarioId;
     if (typeof scenarioId !== "string") {
-      throw new Error("Slack QA module flow requires config.slackScenarioId");
+      return undefined;
     }
     if (!input.primaryModel) {
       throw new Error("Slack QA module flow requires a primary model");
