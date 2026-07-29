@@ -30,6 +30,7 @@ import {
   MIN_CLIENT_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
 } from "@openclaw/gateway-client/browser";
+import { resolveSafeTimeoutDelayMs } from "@openclaw/gateway-client/timeouts";
 import type { ControlUiSessionPullRequests } from "../../../src/gateway/control-ui-contract.js";
 import {
   clearDeviceAuthToken,
@@ -207,6 +208,8 @@ const STARTUP_RETRY_CLOSE_CODE = 4013;
 const BROWSER_WEBSOCKET_CLOSE_CODE = 1006;
 const BROWSER_WEBSOCKET_CONSTRUCTOR_ERROR_CODE = "BROWSER_WEBSOCKET_CONSTRUCTOR_ERROR";
 const BROWSER_WEBSOCKET_SECURITY_ERROR_CODE = "BROWSER_WEBSOCKET_SECURITY_ERROR";
+const DEFAULT_GATEWAY_TICK_INTERVAL_MS = 30_000;
+const MIN_GATEWAY_TICK_WATCH_INTERVAL_MS = 1_000;
 const SESSION_PULL_REQUESTS_RETRY_BASE_MS = 30_000;
 const SESSION_PULL_REQUESTS_RETRY_MAX_MS = 5 * 60_000;
 
@@ -308,6 +311,8 @@ async function buildGatewayConnectDevice(params: {
 export class GatewayBrowserClient {
   private readonly client: GatewayProtocolClient<ConnectPlan>;
   inboundActivitySeq = 0;
+  private lastInboundActivityAtMs: number | null = null;
+  private tickWatchTimer: ReturnType<typeof setInterval> | null = null;
   private pendingDeviceTokenRetry = false;
   private deviceTokenRetryBudgetUsed = false;
   // This optional surface can be advertised before its runtime dependency is usable.
@@ -343,6 +348,7 @@ export class GatewayBrowserClient {
       },
       resolveClose: (context) => this.resolveClose(context),
       onClose: (context, decision) => {
+        this.stopTickWatch();
         const error = context.connectFailure?.error;
         this.client.recordTiming("failed", context.generation, undefined, {
           errorCode: error instanceof GatewayRequestError ? error.code : "SOCKET_CLOSED",
@@ -359,7 +365,10 @@ export class GatewayBrowserClient {
       onSocketFactoryError: (error) => this.handleSocketFactoryError(error),
       onEvent: (event) => this.opts.onEvent?.(event),
       onGap: (info) => this.opts.onGap?.(info),
-      onActivity: () => (this.inboundActivitySeq += 1),
+      onActivity: () => {
+        this.inboundActivitySeq += 1;
+        this.lastInboundActivityAtMs = Date.now();
+      },
       onTiming: ({ plan, detail, ...timing }) => {
         this.opts.onConnectTiming?.({
           ...timing,
@@ -391,6 +400,7 @@ export class GatewayBrowserClient {
   }
 
   stop() {
+    this.stopTickWatch();
     this.client.stop();
     this.pendingDeviceTokenRetry = false;
     this.deviceTokenRetryBudgetUsed = false;
@@ -509,6 +519,7 @@ export class GatewayBrowserClient {
   }
 
   private handleConnectHello(hello: GatewayHelloOk, plan: ConnectPlan) {
+    this.startTickWatch(hello);
     this.pendingDeviceTokenRetry = false;
     this.deviceTokenRetryBudgetUsed = false;
     this.resetSessionPullRequestsAvailability();
@@ -523,6 +534,38 @@ export class GatewayBrowserClient {
       });
     }
     void this.updateRecoveryScopeForHello(hello, plan);
+  }
+
+  private startTickWatch(hello: GatewayHelloOk): void {
+    this.stopTickWatch();
+    const advertisedTickIntervalMs = hello.policy?.tickIntervalMs;
+    // Gateway policy is remote input; use the shared timer clamp so an
+    // oversized interval cannot wrap into a resource-exhausting hot loop.
+    const tickIntervalMs = resolveSafeTimeoutDelayMs(
+      typeof advertisedTickIntervalMs === "number" &&
+        Number.isFinite(advertisedTickIntervalMs) &&
+        advertisedTickIntervalMs > 0
+        ? advertisedTickIntervalMs
+        : DEFAULT_GATEWAY_TICK_INTERVAL_MS,
+      { minMs: MIN_GATEWAY_TICK_WATCH_INTERVAL_MS },
+    );
+    this.lastInboundActivityAtMs = Date.now();
+    this.tickWatchTimer = setInterval(() => {
+      const lastActivityAtMs = this.lastInboundActivityAtMs;
+      // Preserve long-running requests while real Gateway heartbeats arrive;
+      // only a silent socket should enter the shared reconnect lifecycle.
+      if (lastActivityAtMs !== null && Date.now() - lastActivityAtMs > tickIntervalMs * 2) {
+        this.forceReconnect("tick timeout");
+      }
+    }, tickIntervalMs);
+  }
+
+  private stopTickWatch(): void {
+    if (this.tickWatchTimer !== null) {
+      clearInterval(this.tickWatchTimer);
+      this.tickWatchTimer = null;
+    }
+    this.lastInboundActivityAtMs = null;
   }
 
   private async updateRecoveryScopeForHello(hello: GatewayHelloOk, plan: ConnectPlan) {

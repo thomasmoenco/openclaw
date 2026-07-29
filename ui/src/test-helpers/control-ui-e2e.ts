@@ -1323,6 +1323,7 @@ function installControlUiMockGateway(input: {
     readonly protocol = "";
     readyState = MockWebSocket.CONNECTING;
     readonly url: string;
+    private tickTimer: ReturnType<typeof window.setInterval> | null = null;
 
     constructor(url: string | URL) {
       super();
@@ -1366,6 +1367,10 @@ function installControlUiMockGateway(input: {
         return;
       }
       this.readyState = MockWebSocket.CLOSED;
+      if (this.tickTimer !== null) {
+        window.clearInterval(this.tickTimer);
+        this.tickTimer = null;
+      }
       sessionMessageSubscriptions.clear();
       stopRepeatingSessionEvents();
       this.dispatchEvent(new CloseEvent("close", { code, reason }));
@@ -1395,6 +1400,11 @@ function installControlUiMockGateway(input: {
             ? { id, ok: false, error: mockError, type: "res" }
             : { id, ok: true, payload, type: "res" },
         );
+        if (!mockError && method === "connect" && this.readyState === MockWebSocket.OPEN) {
+          this.tickTimer = window.setInterval(() => {
+            this.deliver({ event: "tick", payload: {}, seq: ++seq, type: "event" });
+          }, 30_000);
+        }
         if (!mockError) {
           updateSessionMessageSubscription(method, frame.params);
         }
