@@ -125,10 +125,9 @@ async function writeScriptProducerEvidence(params: {
   failureReason?: string;
 }) {
   const scenarioArtifactBase = path.join(params.outputDir, params.scenarioId ?? "scenario-script");
-  const runRoot = path.join(scenarioArtifactBase, "run-1");
-  await fs.mkdir(runRoot, { recursive: true });
+  await fs.mkdir(scenarioArtifactBase, { recursive: true });
   await fs.writeFile(
-    path.join(runRoot, "qa-evidence.json"),
+    path.join(scenarioArtifactBase, "qa-evidence.json"),
     `${JSON.stringify(
       {
         kind: "openclaw.qa.evidence-summary",
@@ -171,7 +170,7 @@ async function writeScriptProducerEvidence(params: {
   );
   await fs.writeFile(
     path.join(scenarioArtifactBase, "latest-run.json"),
-    `${JSON.stringify({ qaEvidence: path.join(runRoot, "qa-evidence.json") }, null, 2)}\n`,
+    `${JSON.stringify({ qaEvidence: "qa-evidence.json" }, null, 2)}\n`,
     "utf8",
   );
 }
@@ -434,7 +433,7 @@ describe("qa test file scenario runner", () => {
         await fs.mkdir(path.join(runRoot, "surfaces", "web-ui"), { recursive: true });
         await fs.writeFile(path.join(runRoot, "surfaces", "web-ui", "screenshot.png"), "png");
         await fs.writeFile(
-          path.join(runRoot, "qa-evidence.json"),
+          path.join(scenarioArtifactBase, "qa-evidence.json"),
           `${JSON.stringify(
             {
               kind: "openclaw.qa.evidence-summary",
@@ -467,7 +466,7 @@ describe("qa test file scenario runner", () => {
                     artifacts: [
                       {
                         kind: "screenshot",
-                        path: "surfaces/web-ui/screenshot.png",
+                        path: "run-1/surfaces/web-ui/screenshot.png",
                         source: "script-producer:web-ui:smoke",
                       },
                     ],
@@ -483,7 +482,7 @@ describe("qa test file scenario runner", () => {
         );
         await fs.writeFile(
           path.join(scenarioArtifactBase, "latest-run.json"),
-          `${JSON.stringify({ qaEvidence: path.join(runRoot, "qa-evidence.json") }, null, 2)}\n`,
+          `${JSON.stringify({ qaEvidence: "qa-evidence.json" }, null, 2)}\n`,
           "utf8",
         );
         return {
@@ -615,6 +614,63 @@ describe("qa test file scenario runner", () => {
       { scenario: { id: "failing-lane" }, status: "fail" },
     ]);
     expect(result.results[3]?.failureMessage).toBe("gateway-network exited with 1");
+  });
+
+  it("preserves optional producer evidence handling for fail-fast Docker scripts", async () => {
+    const repoRoot = await makeTempRepo("qa-script-docker-producer-");
+    const outputDir = path.join(repoRoot, ".artifacts", "qa-e2e", "docker-producer");
+    const result = await runQaTestFileScenarios({
+      repoRoot,
+      outputDir,
+      providerMode: "mock-openai",
+      primaryModel: "mock-openai/gpt-5.6-luna",
+      failFast: true,
+      scenarios: [makeDockerE2eScenario("docker-lane", "gateway")],
+      runCommand: async () => {
+        await writeScriptProducerEvidence({
+          outputDir,
+          scenarioId: "docker-lane",
+          status: "fail",
+          failureReason: "Docker producer failed.",
+        });
+        return { exitCode: 0, stdout: "script pass\n", stderr: "" };
+      },
+    });
+
+    expect(result.results[0]).toMatchObject({
+      status: "fail",
+      failureMessage: "Docker producer failed.",
+      producerEvidence: { entries: [{ result: { status: "fail" } }] },
+    });
+  });
+
+  it("does not import stale optional evidence for fail-fast Docker scripts", async () => {
+    const repoRoot = await makeTempRepo("qa-script-docker-stale-producer-");
+    const outputDir = path.join(repoRoot, ".artifacts", "qa-e2e", "docker-stale-producer");
+    const scenarioOutputDir = path.join(outputDir, "docker-lane");
+    await writeScriptProducerEvidence({
+      outputDir,
+      scenarioId: "docker-lane",
+      status: "fail",
+      failureReason: "Stale Docker producer failure.",
+    });
+
+    const result = await runQaTestFileScenarios({
+      repoRoot,
+      outputDir,
+      providerMode: "mock-openai",
+      primaryModel: "mock-openai/gpt-5.6-luna",
+      failFast: true,
+      scenarios: [makeDockerE2eScenario("docker-lane", "gateway")],
+      runCommand: async () => {
+        await expect(fs.access(path.join(scenarioOutputDir, "latest-run.json"))).rejects.toThrow();
+        await expect(fs.access(path.join(scenarioOutputDir, "qa-evidence.json"))).rejects.toThrow();
+        return { exitCode: 0, stdout: "script pass\n", stderr: "" };
+      },
+    });
+
+    expect(result.results[0]).toMatchObject({ status: "pass" });
+    expect(result.results[0]?.producerEvidence).toBeUndefined();
   });
 
   it("uses script scenario timeout overrides when running producer commands", async () => {
@@ -800,10 +856,9 @@ describe("qa test file scenario runner", () => {
           "scenario-script-failed",
           "scenario-script",
         );
-        const runRoot = path.join(scenarioArtifactBase, "run-1");
-        await fs.mkdir(runRoot, { recursive: true });
+        await fs.mkdir(scenarioArtifactBase, { recursive: true });
         await fs.writeFile(
-          path.join(runRoot, "qa-evidence.json"),
+          path.join(scenarioArtifactBase, "qa-evidence.json"),
           `${JSON.stringify(
             {
               kind: "openclaw.qa.evidence-summary",
@@ -852,7 +907,7 @@ describe("qa test file scenario runner", () => {
         );
         await fs.writeFile(
           path.join(scenarioArtifactBase, "latest-run.json"),
-          `${JSON.stringify({ qaEvidence: path.join(runRoot, "qa-evidence.json") }, null, 2)}\n`,
+          `${JSON.stringify({ qaEvidence: "qa-evidence.json" }, null, 2)}\n`,
           "utf8",
         );
         return {
@@ -935,10 +990,9 @@ describe("qa test file scenario runner", () => {
           "scenario-script-producer-fail",
           "scenario-script",
         );
-        const runRoot = path.join(scenarioArtifactBase, "run-1");
-        await fs.mkdir(runRoot, { recursive: true });
+        await fs.mkdir(scenarioArtifactBase, { recursive: true });
         await fs.writeFile(
-          path.join(runRoot, "qa-evidence.json"),
+          path.join(scenarioArtifactBase, "qa-evidence.json"),
           `${JSON.stringify(
             {
               kind: "openclaw.qa.evidence-summary",
@@ -987,7 +1041,7 @@ describe("qa test file scenario runner", () => {
         );
         await fs.writeFile(
           path.join(scenarioArtifactBase, "latest-run.json"),
-          `${JSON.stringify({ qaEvidence: path.join(runRoot, "qa-evidence.json") }, null, 2)}\n`,
+          `${JSON.stringify({ qaEvidence: "qa-evidence.json" }, null, 2)}\n`,
           "utf8",
         );
         return {
@@ -1149,6 +1203,11 @@ describe("qa test file scenario runner", () => {
           })}\n`,
           "utf8",
         );
+        await fs.writeFile(
+          path.join(scenarioOutputDir, "latest-run.json"),
+          '{"qaEvidence":"qa-evidence.json"}\n',
+          "utf8",
+        );
         return { exitCode: 0, stdout: "script pass\n", stderr: "" };
       },
       env: {
@@ -1219,6 +1278,11 @@ describe("qa test file scenario runner", () => {
               },
             ],
           })}\n`,
+          "utf8",
+        );
+        await fs.writeFile(
+          path.join(scenarioOutputDir, "latest-run.json"),
+          '{"qaEvidence":"qa-evidence.json"}\n',
           "utf8",
         );
         return { exitCode: 0, stdout: "script pass\n", stderr: "" };
