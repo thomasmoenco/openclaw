@@ -21,6 +21,7 @@ import {
   type ManagedGatewayConfigReloaderParams,
   type RuntimeSecretsPreflightParams,
 } from "./server-reload-contracts.js";
+import { beginGatewayCronConfigAdoption } from "./server-reload-cron-adoption.js";
 import {
   createGatewayReloadHandlers,
   reloadPlanChangesAgentResolution,
@@ -170,12 +171,20 @@ export function startManagedGatewayConfigReloader(
         throw new GatewayConfigReloadSupersededError();
       }
     };
-    assertCurrent();
-    if (reloadPlanChangesAgentResolution(plan)) {
+    let cronAdoption: Awaited<ReturnType<typeof beginGatewayCronConfigAdoption>> = null;
+    try {
+      assertCurrent();
       // The old scheduler still owns the retained legacy id. Adopt its rows before
       // restart tears it down, or the replacement can cold-start ownerless jobs.
-      await params.getState().cronState.cron.reloadForConfigAdoption(nextConfig);
+      cronAdoption = await beginGatewayCronConfigAdoption({
+        cron: params.getState().cronState.cron,
+        enabled: reloadPlanChangesAgentResolution(plan),
+        nextConfig,
+        failureLabel: "gateway restart preparation failed",
+      });
       assertCurrent();
+    } catch (error) {
+      throw cronAdoption ? await cronAdoption.reject(error) : error;
     }
     const restartLifecycle = beginGatewayRestartLifecycle();
     let preparation:
@@ -226,7 +235,7 @@ export function startManagedGatewayConfigReloader(
       }
     } catch (error) {
       restartLifecycle.settle("rejected");
-      throw error;
+      throw cronAdoption ? await cronAdoption.reject(error) : error;
     }
     const {
       ownership: preparationOwnership,
@@ -294,7 +303,7 @@ export function startManagedGatewayConfigReloader(
       transactionOwnership.commitRuntimeEnv();
       restartLifecycle.settle("committed");
       if (reloadPlanChangesAgentResolution(plan)) {
-        params.getState().cronState.cron.completeConfigAdoption(nextConfig);
+        cronAdoption?.complete();
       }
     } catch (error) {
       restartTransaction?.settle("rejected");
@@ -307,7 +316,7 @@ export function startManagedGatewayConfigReloader(
           previousRequiredSharedGatewaySessionGeneration,
         );
       }
-      throw error;
+      throw cronAdoption ? await cronAdoption.reject(error) : error;
     }
   };
 

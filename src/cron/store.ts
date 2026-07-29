@@ -18,10 +18,12 @@ import { readCronStoreStatePath } from "./store/config-state.js";
 import { cronStoreKey } from "./store/key.js";
 import {
   assertCronStoreCanPersist,
+  CronRuntimeRevisionMismatchError,
   CronStoreEpochMismatchError,
   loadedCronStoreFromRows,
   loadCronRows,
   loadCronRowsWithEpoch,
+  readCronRuntimeRevision,
   readCronStoreEpoch,
   replaceCronRows,
   updateCronRuntimeRows,
@@ -38,7 +40,7 @@ export type {
 } from "./store/types.js";
 import type { CronStoreFile } from "./types.js";
 
-export { CronStoreEpochMismatchError };
+export { CronRuntimeRevisionMismatchError, CronStoreEpochMismatchError };
 
 function resolveDefaultCronDir(env: NodeJS.ProcessEnv): string {
   return path.join(resolveConfigDir(env), "cron");
@@ -86,13 +88,14 @@ export async function loadCronJobsStoreWithConfigJobs(
   const resolvedStorePath = path.resolve(storePath);
   const storeKey = cronStoreKey(resolvedStorePath);
   const database = openOpenClawStateDatabase({ env }).db;
-  const { rows, storeEpoch } = loadCronRowsWithEpoch(database, storeKey);
+  const { rows, storeEpoch, runtimeRevision } = loadCronRowsWithEpoch(database, storeKey);
   if (rows.length > 0) {
-    return loadedCronStoreFromRows(rows, storeEpoch);
+    return loadedCronStoreFromRows(rows, storeEpoch, runtimeRevision);
   }
   return {
     store: { version: 1, jobs: [] },
     storeEpoch,
+    runtimeRevision,
     configJobs: [],
     configJobIndexes: [],
     legacyImportedJobIndexes: [],
@@ -101,10 +104,11 @@ export async function loadCronJobsStoreWithConfigJobs(
   };
 }
 
-function emptyLoadedCronStore(storeEpoch = 0): LoadedCronStore {
+function emptyLoadedCronStore(storeEpoch = 0, runtimeRevision = 0): LoadedCronStore {
   return {
     store: { version: 1, jobs: [] },
     storeEpoch,
+    runtimeRevision,
     configJobs: [],
     configJobIndexes: [],
     legacyImportedJobIndexes: [],
@@ -138,14 +142,14 @@ export async function loadCronJobsStoreWithConfigJobsReadOnly(
       return emptyLoadedCronStore();
     }
     const epochSchemaPresent = tableExists(db, "cron_store_epochs");
-    const { rows, storeEpoch } = loadCronRowsWithEpoch(db, storeKey, {
+    const { rows, storeEpoch, runtimeRevision } = loadCronRowsWithEpoch(db, storeKey, {
       ensureEpochSchema: false,
       epochSchemaPresent,
     });
     if (rows.length > 0) {
-      return loadedCronStoreFromRows(rows, storeEpoch);
+      return loadedCronStoreFromRows(rows, storeEpoch, runtimeRevision);
     }
-    return emptyLoadedCronStore(storeEpoch);
+    return emptyLoadedCronStore(storeEpoch, runtimeRevision);
   } finally {
     db.close();
   }
@@ -173,8 +177,17 @@ type SaveCronStoreOptions = {
   env?: NodeJS.ProcessEnv;
   /** Reject a stale full-store writer instead of replacing newer topology. */
   expectedStoreEpoch?: number;
+  /** Detect runtime writes committed since this snapshot was loaded. */
+  expectedRuntimeRevision?: number;
   /** Advance the epoch when an ownership migration changes topology meaning. */
   bumpStoreEpoch?: boolean;
+};
+
+type SaveCronJobsStoreResult = {
+  storeEpoch: number;
+  runtimeRevision: number;
+  runtimeMerged: boolean;
+  store: CronStoreFile;
 };
 
 async function atomicWrite(filePath: string, content: string, dirMode = 0o700): Promise<void> {
@@ -194,31 +207,60 @@ export async function saveCronJobsStore(
   storePath: string,
   store: CronStoreFile,
   opts?: SaveCronStoreOptions,
-) {
+): Promise<SaveCronJobsStoreResult | void> {
   const resolvedStorePath = path.resolve(storePath);
   const storeKey = cronStoreKey(resolvedStorePath);
   if (opts?.stateOnly) {
     // Hot-path timer updates only mutate runtime columns; full config JSON stays
     // untouched so user-authored cron definitions do not churn.
-    runOpenClawStateWriteTransaction(
+    return runOpenClawStateWriteTransaction(
       ({ db }) => {
         const storeEpoch = readCronStoreEpoch(db, storeKey);
         if (opts.expectedStoreEpoch !== undefined && opts.expectedStoreEpoch !== storeEpoch) {
           throw new CronStoreEpochMismatchError(opts.expectedStoreEpoch, storeEpoch);
         }
-        updateCronRuntimeRows(db, storeKey, store);
+        const runtimeRevision = readCronRuntimeRevision(db, storeKey);
+        if (
+          opts.expectedRuntimeRevision !== undefined &&
+          opts.expectedRuntimeRevision !== runtimeRevision
+        ) {
+          throw new CronRuntimeRevisionMismatchError(opts.expectedRuntimeRevision, runtimeRevision);
+        }
+        const nextRuntimeRevision = updateCronRuntimeRows(db, storeKey, store);
+        return {
+          storeEpoch,
+          runtimeRevision: nextRuntimeRevision,
+          runtimeMerged: false,
+          store: loadedCronStoreFromRows(
+            loadCronRows(db, storeKey),
+            storeEpoch,
+            nextRuntimeRevision,
+          ).store,
+        };
       },
       { env: opts?.env },
     );
-    return undefined;
   }
   assertCronStoreCanPersist(store);
   return runOpenClawStateWriteTransaction(
     ({ db }) => {
-      return replaceCronRows(db, storeKey, store, {
+      const runtimeRevisionBeforeWrite = readCronRuntimeRevision(db, storeKey);
+      const runtimeMerged =
+        opts?.expectedRuntimeRevision !== undefined &&
+        opts.expectedRuntimeRevision !== runtimeRevisionBeforeWrite;
+      const storeEpoch = replaceCronRows(db, storeKey, store, {
         expectedStoreEpoch: opts?.expectedStoreEpoch,
+        expectedRuntimeRevision: opts?.expectedRuntimeRevision,
         bumpStoreEpoch: opts?.bumpStoreEpoch ?? true,
       });
+      const runtimeRevision = readCronRuntimeRevision(db, storeKey);
+      return {
+        storeEpoch,
+        runtimeRevision,
+        runtimeMerged,
+        store: loadedCronStoreFromRows(loadCronRows(db, storeKey), storeEpoch, runtimeRevision)
+          .store,
+      };
     },
     { env: opts?.env },
   );
@@ -260,11 +302,11 @@ export async function transformCronJobsStore(
   const storeKey = cronStoreKey(resolvedStorePath);
   return runOpenClawStateWriteTransaction(
     ({ db }) => {
-      const { rows, storeEpoch } = loadCronRowsWithEpoch(db, storeKey);
+      const { rows, storeEpoch, runtimeRevision } = loadCronRowsWithEpoch(db, storeKey);
       const loaded =
         rows.length > 0
-          ? loadedCronStoreFromRows(rows, storeEpoch)
-          : emptyLoadedCronStore(storeEpoch);
+          ? loadedCronStoreFromRows(rows, storeEpoch, runtimeRevision)
+          : emptyLoadedCronStore(storeEpoch, runtimeRevision);
       if (options?.expectedStoreEpoch !== undefined && options.expectedStoreEpoch !== storeEpoch) {
         return false;
       }
@@ -295,11 +337,11 @@ export async function transformCronJobsStoreWithMetadata(
   const storeKey = cronStoreKey(resolvedStorePath);
   return runOpenClawStateWriteTransaction(
     ({ db }) => {
-      const { rows, storeEpoch } = loadCronRowsWithEpoch(db, storeKey);
+      const { rows, storeEpoch, runtimeRevision } = loadCronRowsWithEpoch(db, storeKey);
       const loaded =
         rows.length > 0
-          ? loadedCronStoreFromRows(rows, storeEpoch)
-          : emptyLoadedCronStore(storeEpoch);
+          ? loadedCronStoreFromRows(rows, storeEpoch, runtimeRevision)
+          : emptyLoadedCronStore(storeEpoch, runtimeRevision);
       if (!acquireMetadata(db)) {
         return false;
       }
