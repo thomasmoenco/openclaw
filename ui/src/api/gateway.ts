@@ -27,10 +27,10 @@ import {
   shouldRetryGatewayWithDeviceToken,
   isRetryableGatewayStartupUnavailableError,
   resolveGatewayStartupRetryAfterMs,
+  resolveSafeTimeoutDelayMs,
   MIN_CLIENT_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
 } from "@openclaw/gateway-client/browser";
-import { resolveSafeTimeoutDelayMs } from "@openclaw/gateway-client/timeouts";
 import type { ControlUiSessionPullRequests } from "../../../src/gateway/control-ui-contract.js";
 import {
   clearDeviceAuthToken,
