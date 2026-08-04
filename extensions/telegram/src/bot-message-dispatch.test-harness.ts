@@ -1,4 +1,3 @@
-import { expectDefined } from "@openclaw/normalization-core";
 // Telegram tests cover bot message dispatch plugin behavior.
 import type { Bot } from "grammy";
 import {
@@ -9,6 +8,7 @@ import {
 import { afterEach, beforeAll, beforeEach, describe, expect, vi } from "vitest";
 import { resolveAutoTopicLabelConfig as resolveAutoTopicLabelConfigRuntime } from "./auto-topic-label-config.js";
 import type { TelegramBotDeps } from "./bot-deps.js";
+import { createTelegramTranscriptSnapshotMock } from "./bot-message-dispatch.test-support.js";
 import {
   createSequencedTestDraftStream,
   createTestDraftStream,
@@ -24,13 +24,7 @@ export type DispatchReplyWithBufferedBlockDispatcherArgs = Parameters<
   TelegramBotDeps["dispatchReplyWithBufferedBlockDispatcher"]
 >[0];
 
-export function requireInvocationOrder(
-  mock: { mock: { invocationCallOrder: number[] } },
-  index: number,
-  context: string,
-): number {
-  return expectDefined(mock.mock.invocationCallOrder[index], context);
-}
+export { requireInvocationOrder } from "./bot-message-dispatch.test-support.js";
 
 const createTelegramDraftStreamHoisted = vi.hoisted(() => vi.fn());
 const dispatchReplyWithBufferedBlockDispatcherHoisted = vi.hoisted(() =>
@@ -95,6 +89,7 @@ const readLatestAssistantTextByIdentityHoisted = vi.hoisted(() =>
     async () => undefined,
   ),
 );
+const readVisibleSessionTranscriptSnapshotByIdentityHoisted = vi.hoisted(() => vi.fn());
 const resolveStorePathHoisted = vi.hoisted(() => vi.fn(() => "/tmp/sessions.json"));
 const generateTopicLabelHoisted = vi.hoisted(() => vi.fn());
 const describeStickerImageHoisted = vi.hoisted(() =>
@@ -143,6 +138,7 @@ export const appendAssistantMirrorMessageByIdentity = appendAssistantMirrorMessa
 const getSessionEntry = getSessionEntryHoisted;
 export const loadSessionStore = loadSessionStoreHoisted;
 export const readLatestAssistantTextByIdentity = readLatestAssistantTextByIdentityHoisted;
+let currentTranscriptInboundMessageId = "456";
 const resolveStorePath = resolveStorePathHoisted;
 export const generateTopicLabel = generateTopicLabelHoisted;
 export const describeStickerImage = describeStickerImageHoisted;
@@ -247,6 +243,8 @@ vi.mock("openclaw/plugin-sdk/session-transcript-runtime", async (importOriginal)
     ...actual,
     appendAssistantMirrorMessageByIdentity: appendAssistantMirrorMessageByIdentityHoisted,
     readLatestAssistantTextByIdentity: readLatestAssistantTextByIdentityHoisted,
+    readVisibleSessionTranscriptSnapshotByIdentity:
+      readVisibleSessionTranscriptSnapshotByIdentityHoisted,
   };
 });
 
@@ -383,6 +381,7 @@ function resetTelegramDispatchTestState() {
   wasSentByBot.mockReset();
   appendAssistantMirrorMessageByIdentity.mockReset();
   readLatestAssistantTextByIdentity.mockReset();
+  readVisibleSessionTranscriptSnapshotByIdentityHoisted.mockReset();
   getSessionEntry.mockReset();
   loadSessionStore.mockReset();
   resolveStorePath.mockReset();
@@ -439,6 +438,12 @@ function resetTelegramDispatchTestState() {
   wasSentByBot.mockReturnValue(false);
   resolveStorePath.mockReturnValue("/tmp/sessions.json");
   readLatestAssistantTextByIdentity.mockResolvedValue(undefined);
+  readVisibleSessionTranscriptSnapshotByIdentityHoisted.mockImplementation(async () =>
+    createTelegramTranscriptSnapshotMock({
+      latest: await readLatestAssistantTextByIdentity(),
+      inboundMessageId: currentTranscriptInboundMessageId,
+    }),
+  );
   appendAssistantMirrorMessageByIdentity.mockResolvedValue({
     ok: true,
     messageId: "m1",
@@ -596,6 +601,9 @@ export function createContext(overrides?: Partial<TelegramMessageContext>): Tele
     },
   } as unknown as TelegramMessageContext["turn"];
 
+  currentTranscriptInboundMessageId = String(
+    overrides?.ctxPayload?.MessageSid ?? overrides?.msg?.message_id ?? 456,
+  );
   return {
     ...base,
     ...overrides,

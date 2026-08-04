@@ -22,6 +22,7 @@ import {
   readSessionTranscriptRawDelta,
   readSessionTranscriptEvents,
   readVisibleSessionTranscriptMessageEntries,
+  readVisibleSessionTranscriptSnapshotByIdentity,
   resolveSessionTranscriptIdentity,
   resolveSessionTranscriptTarget,
   resolveSessionTranscriptMemoryHitKeyToSessionKeys,
@@ -390,6 +391,50 @@ describe("session transcript runtime SDK", () => {
         idempotencyKey: "active-assistant",
       },
     ]);
+  });
+
+  it("reads visible entries and latest assistant text from one snapshot", async () => {
+    const scope = {
+      agentId: "main",
+      sessionId: "visible-snapshot-session",
+      sessionKey: "agent:main:visible-snapshot",
+      storePath,
+    };
+    await upsertSessionEntry(scope, { sessionId: scope.sessionId, updatedAt: 10 });
+    const user = await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      message: {
+        role: "user",
+        content: "current inbound",
+        __openclaw: { transport: { channel: "telegram", messageId: "16828" } },
+      },
+      now: 1_000,
+    });
+    const assistant = await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      message: {
+        role: "assistant",
+        content: "current answer",
+        timestamp: 2_000,
+      },
+      parentId: user?.messageId,
+      now: 2_000,
+    });
+    if (!user || !assistant) {
+      throw new Error("expected visible snapshot setup messages");
+    }
+
+    await expect(readVisibleSessionTranscriptSnapshotByIdentity(scope)).resolves.toMatchObject({
+      entries: [
+        { entryId: user.messageId, role: "user" },
+        { entryId: assistant.messageId, parentId: user.messageId, role: "assistant" },
+      ],
+      latestAssistantText: {
+        id: assistant.messageId,
+        text: "current answer",
+        timestamp: 2_000,
+      },
+    });
   });
 
   it("appends assistant mirrors through the guarded session facade", async () => {

@@ -6,7 +6,11 @@ import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import { TELEGRAM_GENERAL_TOPIC_ID, type TelegramThreadSpec } from "./bot/helpers.js";
 import { buildTelegramSelfSenderName } from "./group-history-window.js";
-import { createTelegramMessageCache, resolveTelegramMessageCacheScope } from "./message-cache.js";
+import {
+  createTelegramMessageCache,
+  resolveTelegramMessageCacheScope,
+  type TelegramExpectedResponseCorrelation,
+} from "./message-cache.js";
 import type { TelegramPromptContextProjection } from "./prompt-context-projection.js";
 
 type TelegramOutboundPromptContextUser = {
@@ -136,6 +140,7 @@ export async function recordOutboundMessageForPromptContext(params: {
   successfulSendThread?: TelegramThreadSpec;
   promptContextTimestampMs?: number;
   promptContextProjection?: TelegramPromptContextProjection;
+  expectedResponseCorrelation?: TelegramExpectedResponseCorrelation;
 }): Promise<boolean> {
   try {
     const providerGeneralTopicId =
@@ -168,6 +173,9 @@ export async function recordOutboundMessageForPromptContext(params: {
         : {}),
       ...(providerObservedThreadId !== undefined ? { providerObservedThreadId } : {}),
       ...(messageThreadId !== undefined ? { threadId: messageThreadId } : {}),
+      ...(params.expectedResponseCorrelation
+        ? { expectedResponseCorrelation: params.expectedResponseCorrelation }
+        : {}),
     });
     const timestamp = resolveOutboundCacheMessageTimestamp(cacheMessage);
     outboundGroupHistoryRecorders.get(params.account.accountId)?.({

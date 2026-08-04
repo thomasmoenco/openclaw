@@ -43,6 +43,7 @@ import {
   type TelegramNativeQuoteCandidateByMessageId,
 } from "./bot/native-quote.js";
 import { cacheSticker, describeStickerImage } from "./sticker-cache.js";
+import { beginTelegramTurnCorrelation } from "./turn-correlation.js";
 
 const EMPTY_RESPONSE_FALLBACK = "No response generated. Please try again.";
 const silentReplyDispatchLogger = createSubsystemLogger("telegram/silent-reply-dispatch");
@@ -299,6 +300,16 @@ export const dispatchTelegramMessage = async ({
     injectedTelegramDeps ?? (await import("./bot-deps.js")).defaultTelegramBotDeps;
   const loadFreshSessionEntry = createFreshTelegramSessionEntryLoader({ cfg, telegramDeps });
   const isRoomEvent = dispatchContext.ctxPayload.InboundEventKind === "room_event";
+  const inboundMessageId =
+    dispatchContext.ctxPayload.MessageSid ?? String(dispatchContext.msg.message_id);
+  const turnCorrelation = beginTelegramTurnCorrelation({
+    accountId: dispatchContext.route.accountId,
+    chatId: dispatchContext.chatId,
+    inboundMessageId,
+    ...(dispatchContext.threadSpec.id !== undefined
+      ? { threadId: dispatchContext.threadSpec.id }
+      : {}),
+  });
   const status = createTelegramDispatchStatus({ context: dispatchContext });
   const tableMode = resolveMarkdownTableMode({
     cfg,
@@ -381,6 +392,7 @@ export const dispatchTelegramMessage = async ({
     telegramDeps,
     textLimit,
     threadSpec: dispatchContext.threadSpec,
+    turnCorrelation,
   });
   const state: TelegramDispatchTurnState = {
     queuedFinal: false,
@@ -444,6 +456,16 @@ export const dispatchTelegramMessage = async ({
         streamMode,
         telegramCfg,
         telegramDeps,
+        onAgentRunStart: (runId) => {
+          const sessionKey = dispatchContext.ctxPayload.SessionKey;
+          const sessionId = sessionKey
+            ? loadFreshSessionEntry(dispatchContext.route.agentId, sessionKey).entry?.sessionId
+            : undefined;
+          turnCorrelation.observeRun({ runId, ...(sessionId ? { sessionId } : {}) });
+          logVerbose(
+            `telegram turn correlation: conversation=${turnCorrelation.snapshot()?.conversationId ?? "superseded"} inbound=${inboundMessageId} session=${sessionId ?? "missing"} run=${runId} generation=${turnCorrelation.generation}`,
+          );
+        },
       });
     } catch (err) {
       state.dispatchError = err;
