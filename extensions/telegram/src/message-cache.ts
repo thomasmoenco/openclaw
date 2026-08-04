@@ -33,8 +33,24 @@ export type TelegramReplyChainEntry = NonNullable<MsgContext["ReplyChain"]>[numb
 export type TelegramCachedMessageNode = Omit<TelegramReplyChainEntry, "messageId"> & {
   messageId: string;
   sourceMessage: Message;
+  expectedResponseBinding?: TelegramExpectedResponseBinding;
   promptContextProjectionMarker?: TelegramPromptContextProjectionMarker;
   threadBinding?: TelegramMessageThreadBinding;
+};
+
+export type TelegramExpectedResponseCorrelation = {
+  accountId: string;
+  conversationId: string;
+  generation: string;
+  inboundMessageId: string;
+  runId: string;
+  sessionId: string;
+};
+
+export type TelegramExpectedResponseBinding = TelegramExpectedResponseCorrelation & {
+  consumedByInboundMessageId?: string;
+  createdAt: number;
+  parentOutboundMessageId: string;
 };
 
 // This marker is a provider fact, never an inference from invocation origin or
@@ -59,7 +75,15 @@ type TelegramMessageCache = {
     /** Set only while recording an authenticated provider event or response. */
     providerObservedThreadId?: number;
     threadId?: number;
+    expectedResponseCorrelation?: TelegramExpectedResponseCorrelation;
   }) => Promise<TelegramCachedMessageNode>;
+  consumeExpectedResponse: (params: {
+    accountId: string;
+    botUserId?: number;
+    chatId: string | number;
+    inboundMessageId: string;
+    messageId: string;
+  }) => Promise<TelegramCachedMessageNode | null>;
   get: (params: {
     accountId: string;
     chatId: string | number;
@@ -139,6 +163,7 @@ export type PersistedTelegramMessageCacheValue = {
   promptContextProjection?: TelegramPromptContextProjection | TelegramPromptContextSource;
   threadBinding?: TelegramMessageThreadBinding;
   threadId?: string;
+  expectedResponseBinding?: TelegramExpectedResponseBinding;
 };
 
 type TelegramMessageCachePersistentStore = {
@@ -215,6 +240,7 @@ function resolveMessageTimestamp(msg: Message): number | undefined {
 function normalizeMessageNode(
   msg: Message,
   params: {
+    expectedResponseBinding?: TelegramExpectedResponseBinding;
     threadId?: number;
     promptContextProjectionMarker?: TelegramPromptContextProjectionMarker;
     threadBinding?: TelegramMessageThreadBinding;
@@ -246,6 +272,9 @@ function normalizeMessageNode(
     ...(threadId !== undefined ? { threadId: String(threadId) } : {}),
     ...(params.promptContextProjectionMarker
       ? { promptContextProjectionMarker: params.promptContextProjectionMarker }
+      : {}),
+    ...(params.expectedResponseBinding
+      ? { expectedResponseBinding: params.expectedResponseBinding }
       : {}),
     ...(threadBinding ? { threadBinding } : {}),
   };
@@ -285,6 +314,7 @@ export function hasProviderObservedTelegramThreadBinding(
 function normalizeMessageNodes(
   msg: Message,
   params: {
+    expectedResponseBinding?: TelegramExpectedResponseBinding;
     threadId?: number;
     promptContextProjectionMarker?: TelegramPromptContextProjectionMarker;
     threadBinding?: TelegramMessageThreadBinding;
@@ -300,6 +330,7 @@ function normalizeMessageNodes(
     mode: TelegramMessageObservationMode,
     promptContextProjectionMarker?: TelegramPromptContextProjectionMarker,
     threadBinding?: TelegramMessageThreadBinding,
+    expectedResponseBinding?: TelegramExpectedResponseBinding,
   ) => {
     const node = normalizeMessageNode(message, {
       threadId:
@@ -308,6 +339,7 @@ function normalizeMessageNodes(
         ) ?? inheritedThreadId,
       ...(promptContextProjectionMarker ? { promptContextProjectionMarker } : {}),
       ...(threadBinding ? { threadBinding } : {}),
+      ...(expectedResponseBinding ? { expectedResponseBinding } : {}),
     });
     if (visited.has(node.messageId)) {
       return;
@@ -321,6 +353,7 @@ function normalizeMessageNodes(
         "partial",
         undefined,
         node.threadBinding,
+        undefined,
       );
     }
     observations.push({ node, mode });
@@ -331,6 +364,7 @@ function normalizeMessageNodes(
     "authoritative",
     params.promptContextProjectionMarker,
     params.threadBinding,
+    params.expectedResponseBinding,
   );
   return observations;
 }
@@ -371,15 +405,57 @@ function parsePersistedCacheValue(key: string, value: unknown) {
     value.version === TELEGRAM_MESSAGE_CACHE_PERSISTED_VERSION
       ? normalizeTelegramMessageThreadBinding(value.threadBinding, threadId)
       : undefined;
+  const expectedResponseBinding = parseTelegramExpectedResponseBinding(
+    value.expectedResponseBinding,
+  );
   return normalizeMessageNodes(value.sourceMessage, {
     ...(threadId !== undefined ? { threadId } : {}),
     ...(promptContextProjectionMarker ? { promptContextProjectionMarker } : {}),
     ...(threadBinding ? { threadBinding } : {}),
+    ...(expectedResponseBinding ? { expectedResponseBinding } : {}),
   }).map(({ node, mode }) => ({
     key: `${key.slice(0, separatorIndex + 1)}${node.messageId}`,
     node,
     mode,
   }));
+}
+
+function parseTelegramExpectedResponseBinding(
+  value: unknown,
+): TelegramExpectedResponseBinding | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const required = [
+    "accountId",
+    "conversationId",
+    "generation",
+    "inboundMessageId",
+    "parentOutboundMessageId",
+    "runId",
+    "sessionId",
+  ] as const;
+  if (required.some((key) => typeof value[key] !== "string" || !value[key].trim())) {
+    return undefined;
+  }
+  if (typeof value.createdAt !== "number" || !Number.isFinite(value.createdAt)) {
+    return undefined;
+  }
+  const consumedByInboundMessageId =
+    typeof value.consumedByInboundMessageId === "string" && value.consumedByInboundMessageId.trim()
+      ? value.consumedByInboundMessageId
+      : undefined;
+  return {
+    accountId: value.accountId as string,
+    conversationId: value.conversationId as string,
+    generation: value.generation as string,
+    inboundMessageId: value.inboundMessageId as string,
+    parentOutboundMessageId: value.parentOutboundMessageId as string,
+    runId: value.runId as string,
+    sessionId: value.sessionId as string,
+    createdAt: value.createdAt,
+    ...(consumedByInboundMessageId ? { consumedByInboundMessageId } : {}),
+  };
 }
 
 function trimMessages(messages: Map<string, TelegramCachedMessageNode>, maxMessages: number): void {
@@ -443,10 +519,13 @@ function mergeCachedMessageNode(
   const threadBinding =
     normalizeTelegramMessageThreadBinding(incoming.threadBinding, threadId) ??
     normalizeTelegramMessageThreadBinding(existing.threadBinding, threadId);
+  const expectedResponseBinding =
+    incoming.expectedResponseBinding ?? existing.expectedResponseBinding;
   return normalizeMessageNode(sourceMessage, {
     ...(threadId !== undefined ? { threadId } : {}),
     ...(promptContextProjectionMarker ? { promptContextProjectionMarker } : {}),
     ...(threadBinding ? { threadBinding } : {}),
+    ...(expectedResponseBinding ? { expectedResponseBinding } : {}),
   });
 }
 
@@ -555,6 +634,7 @@ async function persistCachedNode(params: {
   key: string;
   node: TelegramCachedMessageNode;
   botUserId?: number;
+  requirePersistent?: boolean;
 }): Promise<void> {
   const { persistentStore } = params.bucket;
   if (!persistentStore) {
@@ -575,6 +655,9 @@ async function persistCachedNode(params: {
       ...(promptContextProjection ? { promptContextProjection } : {}),
       ...(params.node.threadBinding ? { threadBinding: params.node.threadBinding } : {}),
       ...(params.node.threadId ? { threadId: params.node.threadId } : {}),
+      ...(params.node.expectedResponseBinding
+        ? { expectedResponseBinding: params.node.expectedResponseBinding }
+        : {}),
     });
   } catch (error) {
     logVerbose(`telegram: failed to persist message cache: ${String(error)}`);
@@ -587,6 +670,9 @@ async function persistCachedNode(params: {
             ? marker.projection.transcriptMessageId
             : marker.transcriptMessageId,
       };
+      throw error;
+    }
+    if (params.requirePersistent) {
       throw error;
     }
   }
@@ -660,6 +746,7 @@ export function createTelegramMessageCache(params?: {
       promptContextProjection,
       providerObservedThreadId,
       threadId,
+      expectedResponseCorrelation,
     }) => {
       await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey);
       const threadBinding = createTelegramMessageThreadBinding(providerObservedThreadId);
@@ -674,6 +761,15 @@ export function createTelegramMessageCache(params?: {
             }
           : {}),
         ...(threadBinding ? { threadBinding } : {}),
+        ...(expectedResponseCorrelation
+          ? {
+              expectedResponseBinding: {
+                ...expectedResponseCorrelation,
+                createdAt: Date.now(),
+                parentOutboundMessageId: String(msg.message_id),
+              },
+            }
+          : {}),
       });
       const currentObservation = observations.at(-1)!;
       let recordedEntry = currentObservation.node;
@@ -693,6 +789,47 @@ export function createTelegramMessageCache(params?: {
         });
       }
       return recordedEntry;
+    },
+    consumeExpectedResponse: async ({
+      accountId,
+      botUserId,
+      chatId,
+      inboundMessageId,
+      messageId,
+    }) => {
+      await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey);
+      const key = telegramMessageCacheKey({ scopeKey, accountId, chatId, messageId });
+      const current = messages.get(key);
+      const binding = current?.expectedResponseBinding;
+      if (!current || !binding) {
+        return null;
+      }
+      if (binding.consumedByInboundMessageId) {
+        return binding.consumedByInboundMessageId === inboundMessageId ? current : null;
+      }
+      const consumed = {
+        ...current,
+        expectedResponseBinding: {
+          ...binding,
+          consumedByInboundMessageId: inboundMessageId,
+        },
+      };
+      messages.delete(key);
+      messages.set(key, consumed);
+      try {
+        await persistCachedNode({
+          bucket,
+          key,
+          node: consumed,
+          ...(botUserId !== undefined ? { botUserId } : {}),
+          requirePersistent: true,
+        });
+      } catch (error) {
+        messages.delete(key);
+        messages.set(key, current);
+        throw error;
+      }
+      return consumed;
     },
     get,
     recentBefore: async ({ accountId, chatId, messageId, threadId, limit }) => {

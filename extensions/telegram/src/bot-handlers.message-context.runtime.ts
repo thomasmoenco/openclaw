@@ -4,6 +4,7 @@ import { resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawConfig, TelegramAccountConfig } from "openclaw/plugin-sdk/config-contracts";
 import { DEFAULT_GROUP_HISTORY_LIMIT } from "openclaw/plugin-sdk/reply-history";
 import { stripInlineDirectiveTagsForDelivery } from "openclaw/plugin-sdk/text-chunking";
+import { resolveTelegramAcknowledgementBinding } from "./acknowledgement-binding.js";
 import type { TelegramMediaRef } from "./bot-message-context.js";
 import type {
   TelegramMessageContextOptions,
@@ -26,6 +27,7 @@ import {
   type TelegramReplyChainEntry,
 } from "./message-cache.js";
 import { resolveCompleteTelegramPromptContextProjectionIds } from "./prompt-context-projection.js";
+import { resolveTelegramConversationId } from "./turn-correlation.js";
 
 function legacyAssistantTextKey(node: TelegramCachedMessageNode, botUserId?: number) {
   if (node.promptContextProjectionMarker) {
@@ -93,6 +95,39 @@ export function createTelegramMessageContextRuntime({
 
   const buildReplyChainForMessage = (msg: Message) =>
     buildTelegramReplyChain({ cache: messageCache, accountId, chatId: msg.chat.id, msg });
+
+  const resolveAcknowledgementBindingForMessage = async (msg: Message, botUserId?: number) => {
+    const conversationId = resolveTelegramConversationId({
+      accountId,
+      chatId: msg.chat.id,
+      ...(msg.message_thread_id !== undefined ? { threadId: msg.message_thread_id } : {}),
+    });
+    const binding = resolveTelegramAcknowledgementBinding({
+      conversationId,
+      msg,
+      botUserId,
+      recentMessages: await messageCache.recentBefore({
+        accountId,
+        chatId: msg.chat.id,
+        messageId: String(msg.message_id),
+        ...(msg.message_thread_id !== undefined ? { threadId: msg.message_thread_id } : {}),
+        limit: 20,
+      }),
+    });
+    if (binding.kind !== "bound") {
+      return binding;
+    }
+    const consumed = await messageCache.consumeExpectedResponse({
+      accountId,
+      botUserId,
+      chatId: msg.chat.id,
+      inboundMessageId: String(msg.message_id),
+      messageId: binding.target.messageId,
+    });
+    return consumed
+      ? { kind: "bound" as const, target: consumed }
+      : { kind: "clarify" as const, candidateCount: 0 };
+  };
 
   const toReplyChainEntry = (
     node: TelegramCachedMessageNode,
@@ -250,6 +285,7 @@ export function createTelegramMessageContextRuntime({
 
   return {
     recordMessageForReplyChain,
+    resolveAcknowledgementBindingForMessage,
     buildReplyChainForMessage,
     toReplyChainEntry,
     buildPromptContextForMessage,
