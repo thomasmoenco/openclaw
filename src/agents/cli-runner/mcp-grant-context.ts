@@ -120,6 +120,9 @@ export function buildCliMcpGrantContext(params: {
     agentId: params.agentId,
     sessionId: normalizeOptionalMcpContextValue(params.run.sessionId),
     runId: normalizeOptionalMcpContextValue(params.run.runId),
+    messageActionTurnCapability: normalizeOptionalMcpContextValue(
+      params.run.messageActionTurnCapability,
+    ),
     workspaceDir: params.run.workspaceDir,
     ...(normalizeOptionalMcpContextValue(params.run.cwd) ? { cwd: params.run.cwd?.trim() } : {}),
     // Restricted runs get their allowlist stamped into the grant; the
