@@ -132,8 +132,7 @@ export async function runEmbeddedFallbackCandidate(params: {
     (agentHarnessPolicy.runtime === "openclaw" && embeddedRunProvider !== params.provider
       ? "openclaw"
       : undefined);
-  const messageActionCapabilitySessionKey =
-    turn.runtimePolicySessionKey ?? embeddedContext.sessionKey;
+  const messageActionCapabilitySessionKey = embeddedContext.sessionKey;
   const messageActionTurnCapability =
     isTrustedMessageActionTurnIngress(turn.sessionCtx.Provider) &&
     !turn.isHeartbeat &&
