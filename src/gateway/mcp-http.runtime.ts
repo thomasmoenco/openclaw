@@ -165,6 +165,7 @@ export class McpLoopbackToolCache {
       params.agentId ?? "",
       params.sessionId ?? "",
       params.runId ?? "",
+      params.messageActionTurnCapability ?? "",
       params.workspaceDir ?? "",
       params.cwd ?? "",
       params.modelProvider ?? "",

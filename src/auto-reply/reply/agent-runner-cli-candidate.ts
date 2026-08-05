@@ -9,7 +9,14 @@ import {
   resolveAgentRunErrorLifecycleFields,
 } from "../../agents/run-termination.js";
 import { withLocalSessionPlacementTurnAdmission } from "../../agents/session-placement-admission.js";
+import { normalizeChatType } from "../../channels/chat-type.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import {
+  isTrustedMessageActionTurnIngress,
+  mintMessageActionTurnCapability,
+  resolveMessageActionTurnCapabilityLifetime,
+  revokeMessageActionTurnCapability,
+} from "../../gateway/message-action-turn-capability.js";
 import type { ThinkLevel } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
 import {
@@ -27,6 +34,7 @@ import {
 import type { AgentTurnParams } from "./agent-runner-execution.types.js";
 import type { createAgentTurnPresentation } from "./agent-runner-presentation.js";
 import type { AgentTurnTimingTracker } from "./agent-runner-turn-timing.js";
+import { buildThreadingToolContext } from "./agent-runner-utils.js";
 import { shouldBridgeCliPreambleEvents } from "./get-reply.types.js";
 import { hasInboundAudio } from "./inbound-media.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
@@ -37,6 +45,17 @@ type CliPresentation = Pick<
   ReturnType<typeof createAgentTurnPresentation>,
   "handlePartialForTyping" | "preparePartialForTyping" | "startPresentationWhileTyping"
 >;
+
+async function runCliAgentWithMessageActionTurnCapability(
+  messageActionTurnCapability: string | undefined,
+  params: Parameters<typeof runCliAgentWithLifecycle>[0],
+) {
+  try {
+    return await runCliAgentWithLifecycle(params);
+  } finally {
+    revokeMessageActionTurnCapability(messageActionTurnCapability);
+  }
+}
 
 export async function runCliFallbackCandidate(params: {
   turn: AgentTurnParams;
@@ -102,6 +121,28 @@ export async function runCliFallbackCandidate(params: {
     originatingChannel: turn.followupRun.originatingChannel,
     provider: turn.sessionCtx.Provider,
   });
+  const cliCurrentChannelId =
+    turn.followupRun.originatingTo ?? turn.sessionCtx.OriginatingTo ?? turn.sessionCtx.To;
+  const cliTurnSessionContext = {
+    ...turn.sessionCtx,
+    OriginatingChannel: turn.followupRun.originatingChannel ?? turn.sessionCtx.OriginatingChannel,
+    OriginatingTo: turn.followupRun.originatingTo ?? turn.sessionCtx.OriginatingTo,
+    AccountId:
+      turn.followupRun.originatingAccountId ??
+      turn.sessionCtx.AccountId ??
+      turn.followupRun.run.agentAccountId,
+    ChatType:
+      normalizeChatType(turn.followupRun.originatingChatType) ??
+      normalizeChatType(turn.sessionCtx.ChatType) ??
+      turn.followupRun.run.chatType,
+    MessageThreadId: turn.followupRun.originatingThreadId ?? turn.sessionCtx.MessageThreadId,
+    ReplyToId: turn.followupRun.originatingReplyToId ?? turn.sessionCtx.ReplyToId,
+  };
+  const cliMessageActionToolContext = buildThreadingToolContext({
+    sessionCtx: cliTurnSessionContext,
+    config: params.runtimeConfig,
+    hasRepliedRef: turn.opts?.hasRepliedRef,
+  });
   const cliCurrentThreadId =
     turn.followupRun.originatingThreadId ?? turn.sessionCtx.MessageThreadId;
   const isRestartSentinelContinuation =
@@ -126,8 +167,26 @@ export async function runCliFallbackCandidate(params: {
         agentId: turn.followupRun.run.agentId,
         runId: params.runId,
       },
-      () =>
-        runCliAgentWithLifecycle({
+      () => {
+        const messageActionTurnCapability =
+          isTrustedMessageActionTurnIngress(turn.sessionCtx.Provider) &&
+          !turn.isHeartbeat &&
+          turn.followupRun.run.agentId &&
+          turn.sessionKey &&
+          hookMessageProvider &&
+          cliCurrentChannelId
+            ? mintMessageActionTurnCapability({
+                agentId: turn.followupRun.run.agentId,
+                runId: params.runId,
+                sessionKey: turn.sessionKey,
+                sessionId: turn.followupRun.run.sessionId,
+                requesterAccountId: cliTurnSessionContext.AccountId,
+                requesterSenderId: turn.followupRun.run.senderId ?? undefined,
+                toolContext: cliMessageActionToolContext,
+                ...resolveMessageActionTurnCapabilityLifetime(turn.followupRun.run.timeoutMs),
+              })
+            : undefined;
+        return runCliAgentWithMessageActionTurnCapability(messageActionTurnCapability, {
           runId: params.runId,
           lifecycleGeneration: params.lifecycleGeneration,
           provider: params.cliExecutionProvider,
@@ -266,6 +325,7 @@ export async function runCliFallbackCandidate(params: {
             timeoutMs: turn.followupRun.run.timeoutMs,
             runTimeoutOverrideMs: turn.followupRun.run.runTimeoutOverrideMs,
             runId: params.runId,
+            messageActionTurnCapability,
             lane: params.runLane,
             extraSystemPrompt: turn.followupRun.run.extraSystemPrompt,
             sourceReplyDeliveryMode: turn.followupRun.run.sourceReplyDeliveryMode,
@@ -291,8 +351,7 @@ export async function runCliFallbackCandidate(params: {
             messageChannel: turn.followupRun.originatingChannel ?? undefined,
             messageProvider: hookMessageProvider,
             clientCaps: turn.followupRun.run.clientCaps,
-            currentChannelId:
-              turn.followupRun.originatingTo ?? turn.sessionCtx.OriginatingTo ?? turn.sessionCtx.To,
+            currentChannelId: cliCurrentChannelId,
             senderId: turn.followupRun.run.senderId,
             senderName: turn.followupRun.run.senderName,
             senderUsername: turn.followupRun.run.senderUsername,
@@ -315,7 +374,8 @@ export async function runCliFallbackCandidate(params: {
             onExecutionPhase: params.signalExecutionPhaseForTyping,
             replyOperation: turn.replyOperation,
           },
-        }),
+        });
+      },
     ),
   );
   if (droppedCliSessionReplacement) {

@@ -113,6 +113,8 @@ export type RunCliAgentParams = {
    */
   runTimeoutOverrideMs?: number;
   runId: string;
+  /** Opaque host-issued authority for current-turn channel message actions. */
+  messageActionTurnCapability?: string;
   /** Immutable lifecycle ownership captured when this execution was admitted. */
   lifecycleGeneration?: string;
   lane?: string;
