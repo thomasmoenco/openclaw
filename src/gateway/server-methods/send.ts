@@ -210,6 +210,7 @@ function resolveTrustedMessageActionToolContext(params: {
       toolContext: InternalChannelThreadingToolContext | undefined;
       requesterAccountId: string | undefined;
       requesterSenderId: string | undefined;
+      runId: string | undefined;
       sessionId: string | undefined;
       sourceReplyFinal: boolean | undefined;
       sourceReplyToolCallId: string | undefined;
@@ -225,6 +226,7 @@ function resolveTrustedMessageActionToolContext(params: {
       toolContext: undefined,
       requesterAccountId: undefined,
       requesterSenderId: undefined,
+      runId: undefined,
       sessionId: undefined,
       sourceReplyFinal: undefined,
       sourceReplyToolCallId: undefined,
@@ -265,6 +267,7 @@ function resolveTrustedMessageActionToolContext(params: {
     toolContext: messageActionContext.toolContext,
     requesterAccountId: messageActionContext.requesterAccountId,
     requesterSenderId: messageActionContext.requesterSenderId,
+    runId: messageActionContext.runId,
     sessionId: messageActionContext.sessionId,
     sourceReplyFinal: messageActionContext.sourceReplyFinal,
     sourceReplyToolCallId: messageActionContext.sourceReplyToolCallId,
@@ -987,6 +990,7 @@ export const sendHandlers: GatewayRequestHandlers = {
               : false,
             conversationReadOrigin,
             sessionKey,
+            runId: trustedContext.runId,
             sessionId: normalizeOptionalString(request.sessionId) ?? undefined,
             inboundEventKind: request.inboundTurnKind,
             agentId,

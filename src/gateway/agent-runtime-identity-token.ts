@@ -143,6 +143,7 @@ function decodeMessageActionContext(
     : undefined;
   const context = {
     expiresAtMs: value.expiresAtMs,
+    runId: normalizeOptionalString(value.runId),
     sessionId: normalizeOptionalString(value.sessionId),
     requesterAccountId: normalizeOptionalString(value.requesterAccountId),
     requesterSenderId: normalizeOptionalString(value.requesterSenderId),

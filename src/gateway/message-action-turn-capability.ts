@@ -15,6 +15,8 @@ const CAPABILITY_COMPLETION_GRACE_MS = 60_000;
 
 type AgentRuntimeMessageActionContextBase = {
   expiresAtMs: number;
+  /** Trusted run identity copied from the ingress-issued turn capability. */
+  runId?: string;
   sessionId?: string;
   requesterAccountId?: string;
   requesterSenderId?: string;
@@ -180,6 +182,7 @@ export function resolveMessageActionTurnCapability(params: {
   }
   return {
     expiresAtMs: capability.expiresAtMs,
+    runId: capability.runId,
     sessionId: capability.sessionId,
     requesterAccountId: capability.requesterAccountId,
     requesterSenderId: capability.requesterSenderId,

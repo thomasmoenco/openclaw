@@ -44,6 +44,7 @@ describe("message action turn capability", () => {
       }),
     ).toMatchObject({
       expiresAtMs: 6000,
+      runId: "run-1",
       sessionId: "session-1",
       requesterAccountId: "ops",
       requesterSenderId: "@sender:example.org",

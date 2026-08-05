@@ -306,6 +306,7 @@ async function runMessageActionRequest(
         sessionKey: string;
         messageActionContext?: {
           expiresAtMs: number;
+          runId?: string;
           sessionId?: string;
           sourceReplyFinal?: boolean;
           sourceReplyToolCallId?: string;
@@ -2658,6 +2659,7 @@ describe("gateway send mirroring", () => {
             sessionKey,
             messageActionContext: {
               expiresAtMs: Date.now() + 60_000,
+              runId: "run-whatsapp-1",
               requesterAccountId: "default",
               requesterSenderId: "trusted-user",
               toolContext: {
@@ -2701,6 +2703,7 @@ describe("gateway send mirroring", () => {
       expect.objectContaining({
         inboundEventKind: "room_event",
         requesterAccountId: "default",
+        runId: "run-whatsapp-1",
         toolContext: expect.objectContaining({
           currentChatType: "direct",
           currentMessagingTarget: "user:15551234567",
