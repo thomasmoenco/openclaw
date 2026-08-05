@@ -226,10 +226,9 @@ export type ChannelMessageSendPollContext<TConfig = OpenClawConfig> = Omit<
   isAnonymous?: boolean;
 };
 
-/** Adapter send result normalized to a receipt plus optional legacy message id. */
-export type ChannelMessageSendResult = {
+/** Adapter send result normalized to a receipt while preserving platform identity. */
+export type ChannelMessageSendResult = MessageReceiptSourceResult & {
   receipt: MessageReceipt;
-  messageId?: string;
 };
 
 /** Discriminator for lifecycle hooks around a concrete adapter send attempt. */

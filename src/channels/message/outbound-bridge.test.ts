@@ -86,6 +86,34 @@ describe("createChannelMessageAdapterFromOutbound", () => {
     ]);
   });
 
+  it("preserves platform identity needed for reply correlation", async () => {
+    const adapter = createChannelMessageAdapterFromOutbound({
+      outbound: {
+        sendText: vi.fn(async () => ({
+          channel: "telegram",
+          messageId: "789",
+          chatId: "123",
+        })),
+      },
+    });
+
+    const result = await adapter.send?.text?.({
+      cfg,
+      to: "123",
+      text: "Proceed?",
+    });
+
+    expect(result).toMatchObject({
+      channel: "telegram",
+      messageId: "789",
+      chatId: "123",
+      receipt: {
+        primaryPlatformMessageId: "789",
+        platformMessageIds: ["789"],
+      },
+    });
+  });
+
   it("normalizes outbound progress results before forwarding them to message callers", async () => {
     const sendText = vi.fn(
       async (request: {
@@ -107,6 +135,7 @@ describe("createChannelMessageAdapterFromOutbound", () => {
 
     expect(onDeliveryResult).toHaveBeenCalledTimes(1);
     expect(onDeliveryResult).toHaveBeenCalledWith({
+      channel: "demo",
       messageId: "chunk-1",
       receipt: expect.objectContaining({
         primaryPlatformMessageId: "chunk-1",
@@ -139,7 +168,7 @@ describe("createChannelMessageAdapterFromOutbound", () => {
         text: "caption",
         mediaUrl: "file:///tmp/a.png",
       }),
-    ).resolves.toEqual({ messageId: "legacy-id", receipt });
+    ).resolves.toEqual({ channel: "demo", messageId: "legacy-id", receipt });
   });
 
   it.each([

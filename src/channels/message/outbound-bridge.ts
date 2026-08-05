@@ -101,6 +101,7 @@ function toMessageSendResult(
         replyToId: params.replyToId ?? undefined,
       });
   return {
+    ...result,
     receipt,
     ...(resolveResultMessageId({ ...result, receipt })
       ? {
