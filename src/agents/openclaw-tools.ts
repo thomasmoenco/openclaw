@@ -253,6 +253,8 @@ export function createOpenClawTools(
   // Scheduled turns keep delivery routing live, but Gateway authorization remains bound to the
   // authenticated creator account captured in the immutable scheduled authority envelope.
   const gatewayCallerAccountId = options?.gatewayCallerAccountId ?? options?.agentAccountId;
+  const hookAgentId = options?.requesterAgentIdOverride ?? sessionAgentId;
+  const gatewayCallerOptions = options && { ...options, agentAccountId: gatewayCallerAccountId };
   const runtimeWebTools = getActiveRuntimeWebToolsMetadata();
   const sandbox =
     options?.sandboxRoot && options?.sandboxFsBridge
@@ -379,11 +381,11 @@ export function createOpenClawTools(
     lateBindRuntimeConfig: true,
   });
   options?.recordToolPrepStage?.("openclaw-tools:web-fetch-tool");
-  const messageTool = options?.disableMessageTool
+  let messageTool = options?.disableMessageTool
     ? null
     : createMessageTool({
         agentAccountId: options?.agentAccountId,
-        agentSessionKey: options?.agentSessionKey,
+        agentSessionKey: options?.runSessionKey ?? options?.agentSessionKey,
         runId: options?.runId,
         agentId: sessionAgentId,
         sessionId: options?.sessionId,
@@ -410,6 +412,12 @@ export function createOpenClawTools(
         senderIsOwner: options?.senderIsOwner,
         conversationReadOrigin: options?.conversationReadOrigin,
       });
+  if (messageTool && options?.runSessionKey) {
+    messageTool = createGatewayToolCallerWrapper(hookAgentId, {
+      ...gatewayCallerOptions,
+      agentSessionKey: options.runSessionKey,
+    })(messageTool);
+  }
   const heartbeatTool = options?.enableHeartbeatTool ? createHeartbeatResponseTool() : null;
   options?.recordToolPrepStage?.("openclaw-tools:message-tool");
   const nodesToolBase = createNodesTool({
@@ -732,14 +740,10 @@ export function createOpenClawTools(
   allTools = filterToolsByClientCaps(allTools, options?.clientCaps);
   options?.recordToolPrepStage?.("openclaw-tools:client-capabilities");
 
-  const hookAgentId = options?.requesterAgentIdOverride ?? sessionAgentId;
-  const wrapGatewayCallerIdentity = createGatewayToolCallerWrapper(
-    hookAgentId,
-    options ? { ...options, agentAccountId: gatewayCallerAccountId } : options,
-  );
+  const wrapGatewayCaller = createGatewayToolCallerWrapper(hookAgentId, gatewayCallerOptions);
 
   if (options?.wrapBeforeToolCallHook === false) {
-    return allTools.map(wrapGatewayCallerIdentity);
+    return allTools.map(wrapGatewayCaller);
   }
   const defaultHookContext: HookContext = {
     ...(hookAgentId ? { agentId: hookAgentId } : {}),
@@ -760,5 +764,5 @@ export function createOpenClawTools(
         ? tool
         : wrapToolWithBeforeToolCallHook(tool, hookContext),
     )
-    .map(wrapGatewayCallerIdentity);
+    .map(wrapGatewayCaller);
 }

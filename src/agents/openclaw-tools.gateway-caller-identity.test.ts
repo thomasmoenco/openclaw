@@ -3,6 +3,27 @@ import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   observedIdentities: [] as Array<unknown>,
+  messageObservations: [] as Array<{
+    agentSessionKey?: string;
+    identity: unknown;
+  }>,
+}));
+
+vi.mock("./tools/message-tool.js", () => ({
+  createMessageTool: (options: { agentSessionKey?: string }) => ({
+    name: "message",
+    label: "Message",
+    description: "Synthetic message tool",
+    parameters: { type: "object", properties: {} },
+    execute: async () => {
+      const { getGatewayToolCallerIdentity } = await import("./tools/gateway-caller-context.js");
+      mocks.messageObservations.push({
+        agentSessionKey: options.agentSessionKey,
+        identity: getGatewayToolCallerIdentity(),
+      });
+      return { content: [{ type: "text", text: "ok" }] };
+    },
+  }),
 }));
 
 vi.mock("./openclaw-plugin-tools.js", () => ({
@@ -94,6 +115,27 @@ describe("createOpenClawTools Gateway caller identity", () => {
         turnSourceChannel: "discord",
         turnSourceTo: "channel:123",
         turnSourceAccountId: "creator-account",
+      },
+    ]);
+  });
+
+  it("uses the durable run session for message actions inside a policy sandbox", async () => {
+    mocks.messageObservations.length = 0;
+
+    const tool = requireTool("message", {
+      agentSessionKey: "agent:main:main",
+      runSessionKey: "agent:main:telegram:direct:123",
+      disableMessageTool: false,
+    });
+    await tool.execute("tool-call-message", {});
+
+    expect(mocks.messageObservations).toEqual([
+      {
+        agentSessionKey: "agent:main:telegram:direct:123",
+        identity: {
+          agentId: "main",
+          sessionKey: "agent:main:telegram:direct:123",
+        },
       },
     ]);
   });
