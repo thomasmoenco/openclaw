@@ -51,10 +51,14 @@ describe("telegramMessageActions", () => {
         messageId: "9001",
         to: "-1001:topic:77",
         conversationReadOrigin: "direct-operator",
+        runId: "model-run",
+        sessionId: "model-session",
       },
       cfg: { channels: { telegram: { botToken: "tok" } } } as OpenClawConfig,
       accountId: "work",
       requesterAccountId: "work",
+      runId: "run-1",
+      sessionId: "session-1",
       conversationReadOrigin: "delegated",
       toolContext: {
         currentChannelProvider: "telegram",
@@ -64,11 +68,17 @@ describe("telegramMessageActions", () => {
     } as never);
 
     expect(handleTelegramActionMock).toHaveBeenCalledWith(
-      expect.not.objectContaining({ conversationReadOrigin: "direct-operator" }),
+      expect.not.objectContaining({
+        conversationReadOrigin: "direct-operator",
+        runId: "model-run",
+        sessionId: "model-session",
+      }),
       expect.anything(),
       expect.objectContaining({
         conversationReadOrigin: "delegated",
         requesterAccountId: "work",
+        runId: "run-1",
+        sessionId: "session-1",
         toolContext: expect.objectContaining({ currentMessageId: "9001" }),
       }),
     );
@@ -76,6 +86,8 @@ describe("telegramMessageActions", () => {
       action: "deleteMessage",
       messageId: "9001",
     });
+    expect(handleTelegramActionMock.mock.calls[0]?.[0]).not.toHaveProperty("runId");
+    expect(handleTelegramActionMock.mock.calls[0]?.[0]).not.toHaveProperty("sessionId");
   });
 
   it("allows interactive-only sends", async () => {

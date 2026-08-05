@@ -32,7 +32,7 @@ function message(params: {
   } as Message;
 }
 
-function node(msg: Message): TelegramCachedMessageNode {
+function node(msg: Message, inboundMessageId?: string): TelegramCachedMessageNode {
   const body = "text" in msg ? msg.text : undefined;
   return {
     messageId: String(msg.message_id),
@@ -48,7 +48,7 @@ function node(msg: Message): TelegramCachedMessageNode {
             conversationId: CONVERSATION_ID,
             createdAt: msg.date * 1000,
             generation: "generation-1",
-            inboundMessageId: "9",
+            inboundMessageId: inboundMessageId ?? String(msg.message_id - 1),
             parentOutboundMessageId: String(msg.message_id),
             runId: "run-1",
             sessionId: "session-1",
@@ -86,6 +86,7 @@ describe("Telegram acknowledgement binding", () => {
   });
 
   it("requires clarification when zero or multiple questions are eligible", () => {
+    const priorUser = message({ id: 19, text: "Choose", fromId: 7 });
     const first = message({ id: 20, text: "First?", fromId: BOT_ID, isBot: true });
     const second = message({ id: 21, text: "Second?", fromId: BOT_ID, isBot: true });
     const ack = message({ id: 22, text: "OK", fromId: 7 });
@@ -102,10 +103,33 @@ describe("Telegram acknowledgement binding", () => {
       resolveTelegramAcknowledgementBinding({
         conversationId: CONVERSATION_ID,
         msg: ack,
-        recentMessages: [node(first), node(second)],
+        recentMessages: [node(priorUser), node(first, "19"), node(second, "19")],
         botUserId: BOT_ID,
       }),
     ).toEqual({ kind: "clarify", candidateCount: 2 });
+  });
+
+  it("rejects a delayed question from an older human turn", () => {
+    const oldUser = message({ id: 40, text: "Old request", fromId: 7 });
+    const newerUser = message({ id: 41, text: "New request", fromId: 7 });
+    const delayedQuestion = message({
+      id: 42,
+      text: "Proceed with the old request?",
+      fromId: BOT_ID,
+      isBot: true,
+    });
+    const ack = message({ id: 43, text: "Yes", fromId: 7 });
+
+    expect(
+      resolveTelegramAcknowledgementBinding({
+        conversationId: CONVERSATION_ID,
+        msg: ack,
+        recentMessages: [oldUser, newerUser, delayedQuestion].map((entry) =>
+          entry === delayedQuestion ? node(entry, "40") : node(entry),
+        ),
+        botUserId: BOT_ID,
+      }),
+    ).toEqual({ kind: "clarify", candidateCount: 0 });
   });
 
   it("does not infer explicit replies, expired questions, or consumed questions", () => {
@@ -160,11 +184,12 @@ describe("Telegram acknowledgement binding", () => {
       ...consumedQuestion.expectedResponseBinding!,
       consumedByInboundMessageId: String(repeatedAck.message_id),
     };
+    const priorUser = message({ id: 29, text: "Proceed request", fromId: 7 });
     expect(
       resolveTelegramAcknowledgementBinding({
         conversationId: CONVERSATION_ID,
         msg: repeatedAck,
-        recentMessages: [consumedQuestion],
+        recentMessages: [node(priorUser), consumedQuestion],
         botUserId: BOT_ID,
       }),
     ).toEqual({ kind: "bound", target: consumedQuestion });

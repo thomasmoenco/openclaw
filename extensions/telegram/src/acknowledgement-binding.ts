@@ -61,6 +61,7 @@ export function resolveTelegramAcknowledgementBinding(params: {
   const lastHumanIndex = params.recentMessages.findLastIndex(
     (node) => !isTelegramMessageFromCurrentBot(node.sourceMessage, params.botUserId),
   );
+  const lastHumanMessageId = params.recentMessages[lastHumanIndex]?.messageId;
   const nowMs = params.nowMs ?? params.msg.date * 1000;
   const ttlMs = params.ttlMs ?? TELEGRAM_ACKNOWLEDGEMENT_TTL_MS;
   const candidates = params.recentMessages.slice(lastHumanIndex + 1).filter((node) => {
@@ -73,6 +74,7 @@ export function resolveTelegramAcknowledgementBinding(params: {
       (expected.consumedByInboundMessageId !== undefined &&
         expected.consumedByInboundMessageId !== String(params.msg.message_id)) ||
       expected.conversationId !== params.conversationId ||
+      expected.inboundMessageId !== lastHumanMessageId ||
       expected.parentOutboundMessageId !== node.messageId ||
       !isQuestionCandidate(node)
     ) {
