@@ -133,6 +133,17 @@ function normalizeTelegramActionName(action: string): TelegramActionName {
   return normalized;
 }
 
+function resolveTelegramDirectSessionTarget(
+  sessionKey: string | null | undefined,
+): ReturnType<typeof parseTelegramTarget> | undefined {
+  const match = /^agent:[^:]+:telegram:direct:([^:]+)$/i.exec(sessionKey?.trim() ?? "");
+  if (!match?.[1]) {
+    return undefined;
+  }
+  const target = parseTelegramTarget(match[1]);
+  return target.chatType === "direct" && target.messageThreadId === undefined ? target : undefined;
+}
+
 function readTelegramChatId(params: Record<string, unknown>) {
   return (
     readStringOrNumberParam(params, "chatId") ??
@@ -607,9 +618,11 @@ export async function handleTelegramAction(
     // trusted host context proves this was a text question in the exact current DM.
     const selectedAccountId = normalizeAccountId(accountId ?? resolveDefaultTelegramAccountId(cfg));
     const target = parseTelegramTarget(to);
+    const directSessionTarget = resolveTelegramDirectSessionTarget(options?.sessionKey);
     const currentTargets = [
       options?.toolContext?.currentChannelId,
       options?.toolContext?.currentMessagingTarget,
+      directSessionTarget?.chatId,
     ]
       .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
       .map((value) => parseTelegramTarget(value));
@@ -617,6 +630,8 @@ export async function handleTelegramAction(
     const outboundMessageId = parseStrictPositiveInteger(result.messageId);
     const resultChatId = result.chatId ? parseTelegramTarget(result.chatId).chatId : undefined;
     const botUserId = resolveTelegramBotUserIdFromToken(token);
+    const currentChannelProvider = options?.toolContext?.currentChannelProvider;
+    const currentChatType = options?.toolContext?.currentChatType;
     const bindsCurrentDirectQuestion =
       content.includes("?") &&
       mediaUrls.length === 0 &&
@@ -625,8 +640,12 @@ export async function handleTelegramAction(
       target.chatType === "direct" &&
       target.messageThreadId === undefined &&
       messageThreadId === undefined &&
-      options?.toolContext?.currentChannelProvider === "telegram" &&
-      options.toolContext.currentChatType === "direct" &&
+      (currentChannelProvider === undefined
+        ? directSessionTarget !== undefined
+        : currentChannelProvider === "telegram") &&
+      (currentChatType === undefined
+        ? directSessionTarget !== undefined
+        : currentChatType === "direct") &&
       currentTargets.length > 0 &&
       currentTargets.every(
         (currentTarget) =>
