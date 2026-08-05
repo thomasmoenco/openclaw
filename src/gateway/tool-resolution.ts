@@ -62,6 +62,7 @@ export function resolveGatewayScopedTools(params: {
   agentId?: string;
   sessionId?: string;
   runId?: string;
+  messageActionTurnCapability?: string;
   workspaceDir?: string;
   cwd?: string;
   modelProvider?: string;
@@ -253,6 +254,8 @@ export function resolveGatewayScopedTools(params: {
     currentMessageId: params.currentMessageId,
     currentInboundAudio: params.currentInboundAudio,
     sessionId: params.sessionId,
+    runId: params.runId,
+    messageActionTurnCapability: params.messageActionTurnCapability,
     onYield: params.onYield,
     requireExplicitMessageTarget: params.requireExplicitMessageTarget,
     senderIsOwner: params.senderIsOwner,

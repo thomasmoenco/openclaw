@@ -11,6 +11,8 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 type CreateOpenClawToolsArg = {
   clientCaps?: string[];
+  messageActionTurnCapability?: string;
+  runId?: string;
   cronCreatorToolAllowlist?: Array<string | { name: string; pluginId?: string }>;
   inheritedToolAllowlist?: string[];
   inheritedToolDenylist?: string[];
@@ -132,6 +134,19 @@ describe("resolveGatewayScopedTools excludeToolNames", () => {
     });
 
     expect(readCreateToolsArgs().clientCaps).toEqual(["tool-events", "inline-widgets"]);
+  });
+
+  it("passes the immutable CLI turn capability into message tool construction", () => {
+    resolveGatewayScopedTools({
+      cfg: {} as OpenClawConfig,
+      sessionKey: "agent:main:telegram:direct:123",
+      surface: "loopback",
+      runId: "run-1",
+      messageActionTurnCapability: "turn-capability-1",
+    });
+
+    expect(readCreateToolsArgs().runId).toBe("run-1");
+    expect(readCreateToolsArgs().messageActionTurnCapability).toBe("turn-capability-1");
   });
 
   it("filters loopback dedup exclusions without inheriting policy denies", () => {

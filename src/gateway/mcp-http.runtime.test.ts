@@ -159,6 +159,29 @@ describe("resolveMcpLoopbackScopedTools", () => {
 });
 
 describe("McpLoopbackToolCache", () => {
+  it("does not reuse a tool closure across turn capabilities", () => {
+    const cache = new McpLoopbackToolCache();
+    const cfg = {} as OpenClawConfig;
+
+    cache.resolve(
+      scopeParams({ cfg, runId: "run-1", messageActionTurnCapability: "capability-1" }),
+    );
+    cache.resolve(
+      scopeParams({ cfg, runId: "run-1", messageActionTurnCapability: "capability-2" }),
+    );
+    cache.resolve(
+      scopeParams({ cfg, runId: "run-1", messageActionTurnCapability: "capability-2" }),
+    );
+
+    expect(resolveGatewayScopedTools).toHaveBeenCalledTimes(2);
+    expect(resolveGatewayScopedTools.mock.calls[0]?.[0]).toMatchObject({
+      messageActionTurnCapability: "capability-1",
+    });
+    expect(resolveGatewayScopedTools.mock.calls[1]?.[0]).toMatchObject({
+      messageActionTurnCapability: "capability-2",
+    });
+  });
+
   it("does not share cache rows across different grant allowlists", () => {
     const cache = new McpLoopbackToolCache();
     const cfg = {} as OpenClawConfig;

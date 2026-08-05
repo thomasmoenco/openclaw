@@ -2911,6 +2911,7 @@ describe("prepareCliRunContext", () => {
       provider: "native-cli",
       modelProvider: "anthropic",
       runId: "run-test-room-event-tools",
+      messageActionTurnCapability: "turn-capability-1",
       sessionEntry: {
         execHost: "node",
         execSecurity: "allowlist",
@@ -2968,6 +2969,7 @@ describe("prepareCliRunContext", () => {
         agentId: "worker",
         sessionId: "session-test",
         runId: "run-test-room-event-tools",
+        messageActionTurnCapability: "turn-capability-1",
         workspaceDir: context.workspaceDir,
         modelProvider: "anthropic",
         modelId: "test-model",

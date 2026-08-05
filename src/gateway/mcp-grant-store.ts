@@ -15,6 +15,8 @@ export type McpLoopbackRequestContext = {
   agentId?: string;
   sessionId?: string;
   runId?: string;
+  /** Gateway-minted and copied into the immutable CLI grant; never accepted from child input. */
+  messageActionTurnCapability?: string;
   /** Server-selected roots for mediated coding tools in this CLI run. */
   workspaceDir?: string;
   cwd?: string;
