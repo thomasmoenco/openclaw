@@ -929,6 +929,47 @@ describe("handleTelegramAction", () => {
     });
   });
 
+  it("binds from the trusted direct session when optional channel context is absent", async () => {
+    const cfg = telegramConfig({ botToken: "99:test-token" });
+    await handleTelegramAction(
+      {
+        action: "sendMessage",
+        to: "123",
+        content: "Proceed?",
+      },
+      cfg,
+      {
+        requesterAccountId: "default",
+        runId: "run-1",
+        sessionId: "session-1",
+        sessionKey: "agent:main:telegram:direct:123",
+        toolContext: {
+          currentMessageId: "788",
+          currentSourceTurnId: "source-turn-1",
+        },
+      },
+    );
+
+    const cache = createTelegramMessageCache({
+      scope: resolveTelegramMessageCacheScope(
+        resolveStorePath(cfg.session?.store, { agentId: "main" }),
+      ),
+    });
+    await expect(
+      cache.get({ accountId: "default", chatId: "123", messageId: "789" }),
+    ).resolves.toMatchObject({
+      expectedResponseBinding: {
+        accountId: "default",
+        conversationId: "default:123:root",
+        generation: "run-1",
+        inboundMessageId: "788",
+        parentOutboundMessageId: "789",
+        runId: "run-1",
+        sessionId: "session-1",
+      },
+    });
+  });
+
   it("does not bind a question sent outside the current direct conversation", async () => {
     const cfg = telegramConfig({ botToken: "99:test-token" });
     await handleTelegramAction(
