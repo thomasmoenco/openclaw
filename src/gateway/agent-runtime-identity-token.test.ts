@@ -157,6 +157,7 @@ describe("agent runtime identity token", () => {
       sessionKey: "session-1",
       messageActionContext: {
         expiresAtMs: 5000,
+        runId: "run-1",
         sourceReplyFinal: true,
         sourceReplyToolCallId: "message-call-1",
         sourceReplySessionKey: "agent:main:main",
@@ -178,6 +179,7 @@ describe("agent runtime identity token", () => {
       sessionKey: "session-1",
       messageActionContext: {
         expiresAtMs: 5000,
+        runId: "run-1",
         sourceReplyFinal: true,
         sourceReplyToolCallId: "message-call-1",
         sourceReplySessionKey: "agent:main:main",

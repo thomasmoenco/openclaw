@@ -699,6 +699,8 @@ export type ChannelMessageActionContext = {
    */
   conversationReadOrigin?: ConversationReadInvocationOrigin;
   sessionKey?: string | null;
+  /** Trusted current run id. Never sourced from tool/model-controlled params. */
+  runId?: string | null;
   sessionId?: string | null;
   inboundEventKind?: InboundEventKind;
   agentId?: string | null;

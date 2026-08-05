@@ -1,3 +1,4 @@
+import { normalizeAccountId, normalizeOptionalAccountId } from "openclaw/plugin-sdk/account-core";
 // Telegram plugin module implements action runtime behavior.
 import type { AgentToolResult } from "openclaw/plugin-sdk/agent-core";
 import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
@@ -24,11 +25,13 @@ import {
   renderMessagePresentationFallbackText,
 } from "openclaw/plugin-sdk/interactive-runtime";
 import type { MessagePresentation } from "openclaw/plugin-sdk/interactive-runtime";
+import { parseStrictPositiveInteger } from "openclaw/plugin-sdk/number-runtime";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import {
   createTelegramActionGate,
   resolveDefaultTelegramAccountId,
+  resolveTelegramAccount,
   resolveTelegramPollActionGateState,
 } from "./accounts.js";
 import { resolveTelegramInlineButtons } from "./button-types.js";
@@ -42,6 +45,7 @@ import {
   resolveTelegramMessageMutationChatId,
   type TelegramMessageMutationContext,
 } from "./message-topic-binding.js";
+import { recordOutboundMessageForPromptContext } from "./outbound-message-context.js";
 import { resolveTelegramPollVisibility } from "./poll-visibility.js";
 import { resolveTelegramReactionLevel } from "./reaction-level.js";
 import {
@@ -58,8 +62,9 @@ import {
 } from "./send.js";
 import { getCacheStats, searchStickers } from "./sticker-cache.js";
 import { normalizeTelegramOutboundTarget, parseTelegramTarget } from "./targets.js";
-import { resolveTelegramToken } from "./token.js";
+import { resolveTelegramBotUserIdFromToken, resolveTelegramToken } from "./token.js";
 import { resolveTopicNameCacheScope, updateTopicName } from "./topic-name-cache.js";
+import { resolveTelegramConversationId } from "./turn-correlation.js";
 
 export const telegramActionRuntime = {
   createForumTopicTelegram,
@@ -349,6 +354,8 @@ export async function handleTelegramAction(
     mediaLocalRoots?: readonly string[];
     mediaReadFile?: (filePath: string) => Promise<Buffer>;
     sessionKey?: string | null;
+    runId?: string | null;
+    sessionId?: string | null;
     inboundEventKind?: string;
     gatewayClientScopes?: readonly string[];
     conversationReadOrigin?: ConversationReadInvocationOrigin;
@@ -595,6 +602,71 @@ export async function handleTelegramAction(
       throw new Error("Telegram sendMessage was suppressed before delivery.");
     }
     const result = getLastDurableTelegramActionResult(durableResult);
+    // Normal reply delivery attaches this correlation in its own controller.
+    // Message-tool sends use the durable outbound adapter, so attach only after
+    // trusted host context proves this was a text question in the exact current DM.
+    const selectedAccountId = normalizeAccountId(accountId ?? resolveDefaultTelegramAccountId(cfg));
+    const target = parseTelegramTarget(to);
+    const currentTargets = [
+      options?.toolContext?.currentChannelId,
+      options?.toolContext?.currentMessagingTarget,
+    ]
+      .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
+      .map((value) => parseTelegramTarget(value));
+    const inboundMessageId = parseStrictPositiveInteger(options?.toolContext?.currentMessageId);
+    const outboundMessageId = parseStrictPositiveInteger(result.messageId);
+    const resultChatId = result.chatId ? parseTelegramTarget(result.chatId).chatId : undefined;
+    const botUserId = resolveTelegramBotUserIdFromToken(token);
+    const bindsCurrentDirectQuestion =
+      content.includes("?") &&
+      mediaUrls.length === 0 &&
+      !location &&
+      !asVideoNote &&
+      target.chatType === "direct" &&
+      target.messageThreadId === undefined &&
+      messageThreadId === undefined &&
+      options?.toolContext?.currentChannelProvider === "telegram" &&
+      options.toolContext.currentChatType === "direct" &&
+      currentTargets.length > 0 &&
+      currentTargets.every(
+        (currentTarget) =>
+          currentTarget.chatId === target.chatId && currentTarget.messageThreadId === undefined,
+      ) &&
+      resultChatId === target.chatId &&
+      normalizeOptionalAccountId(options?.requesterAccountId) === selectedAccountId &&
+      Boolean(options?.runId?.trim()) &&
+      Boolean(options?.sessionId?.trim()) &&
+      inboundMessageId !== undefined &&
+      outboundMessageId !== undefined &&
+      botUserId !== undefined;
+    if (bindsCurrentDirectQuestion) {
+      const account = resolveTelegramAccount({ cfg, accountId: selectedAccountId });
+      await recordOutboundMessageForPromptContext({
+        cfg,
+        account,
+        botUserId,
+        chatId: target.chatId,
+        message: {
+          message_id: outboundMessageId,
+          chat: { id: target.chatId, type: "private" },
+          date: Math.floor(Date.now() / 1000),
+          text: content,
+        },
+        messageId: outboundMessageId,
+        text: content,
+        expectedResponseCorrelation: {
+          accountId: selectedAccountId,
+          conversationId: resolveTelegramConversationId({
+            accountId: selectedAccountId,
+            chatId: target.chatId,
+          }),
+          generation: options!.runId!.trim(),
+          inboundMessageId: String(inboundMessageId),
+          runId: options!.runId!.trim(),
+          sessionId: options!.sessionId!.trim(),
+        },
+      });
+    }
     notifyVisibleOutboundSuccess(to, messageThreadId);
     return jsonResult({
       ok: true,

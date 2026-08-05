@@ -11,6 +11,7 @@ import {
   telegramActionRuntime,
 } from "./action-runtime.js";
 import { beginTelegramInboundEventDeliveryCorrelation } from "./inbound-event-delivery.js";
+import { createTelegramMessageCache, resolveTelegramMessageCacheScope } from "./message-cache.js";
 import { setTelegramRuntime } from "./runtime.js";
 import {
   clearTelegramRuntimeForTest,
@@ -883,6 +884,82 @@ describe("handleTelegramAction", () => {
       messageId: "789",
       chatId: "123",
     });
+  });
+
+  it("binds a same-turn direct question sent through the message action", async () => {
+    const cfg = telegramConfig({ botToken: "99:test-token" });
+    await handleTelegramAction(
+      {
+        action: "sendMessage",
+        to: "123",
+        content: "Proceed?",
+      },
+      cfg,
+      {
+        requesterAccountId: "default",
+        runId: "run-1",
+        sessionId: "session-1",
+        sessionKey: "agent:main:telegram:direct:123",
+        toolContext: {
+          currentChannelProvider: "telegram",
+          currentChannelId: "telegram:123",
+          currentChatType: "direct",
+          currentMessageId: "788",
+        },
+      },
+    );
+
+    const cache = createTelegramMessageCache({
+      scope: resolveTelegramMessageCacheScope(
+        resolveStorePath(cfg.session?.store, { agentId: "main" }),
+      ),
+    });
+    await expect(
+      cache.get({ accountId: "default", chatId: "123", messageId: "789" }),
+    ).resolves.toMatchObject({
+      expectedResponseBinding: {
+        accountId: "default",
+        conversationId: "default:123:root",
+        generation: "run-1",
+        inboundMessageId: "788",
+        parentOutboundMessageId: "789",
+        runId: "run-1",
+        sessionId: "session-1",
+      },
+    });
+  });
+
+  it("does not bind a question sent outside the current direct conversation", async () => {
+    const cfg = telegramConfig({ botToken: "99:test-token" });
+    await handleTelegramAction(
+      {
+        action: "sendMessage",
+        to: "456",
+        content: "Proceed elsewhere?",
+      },
+      cfg,
+      {
+        requesterAccountId: "default",
+        runId: "run-1",
+        sessionId: "session-1",
+        sessionKey: "agent:main:telegram:direct:123",
+        toolContext: {
+          currentChannelProvider: "telegram",
+          currentChannelId: "telegram:123",
+          currentChatType: "direct",
+          currentMessageId: "788",
+        },
+      },
+    );
+
+    const cache = createTelegramMessageCache({
+      scope: resolveTelegramMessageCacheScope(
+        resolveStorePath(cfg.session?.store, { agentId: "main" }),
+      ),
+    });
+    await expect(
+      cache.get({ accountId: "default", chatId: "456", messageId: "789" }),
+    ).resolves.toBeNull();
   });
 
   it("persists sendMessage action deliveries before Telegram platform send", async () => {

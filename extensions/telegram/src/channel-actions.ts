@@ -248,6 +248,8 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
     mediaLocalRoots,
     mediaReadFile,
     sessionKey,
+    runId,
+    sessionId,
     inboundEventKind,
     toolContext,
     conversationReadOrigin,
@@ -261,6 +263,8 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
     const {
       conversationReadOrigin: _modelConversationReadOrigin,
       requesterAccountId: _modelRequesterAccountId,
+      runId: _modelRunId,
+      sessionId: _modelSessionId,
       toolContext: _modelToolContext,
       ...runtimeParams
     } = params;
@@ -284,6 +288,8 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
         sessionKey,
         inboundEventKind,
         gatewayClientScopes,
+        ...(runId ? { runId } : {}),
+        ...(sessionId ? { sessionId } : {}),
         ...(conversationReadOrigin ? { conversationReadOrigin } : {}),
         ...(requesterAccountId ? { requesterAccountId } : {}),
         ...(toolContext ? { toolContext } : {}),
