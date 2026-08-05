@@ -70,6 +70,7 @@ export function createTelegramHandlerMessageRuntime({
   const { resolveTelegramSessionState, resolvePromptContextAmbientWatermark } = sessionRuntime;
   const {
     recordMessageForReplyChain,
+    resolveAcknowledgementBindingForMessage,
     buildReplyChainForMessage,
     toReplyChainEntry,
     buildPromptContextForMessage,
@@ -255,23 +256,85 @@ export function createTelegramHandlerMessageRuntime({
       }
     };
     try {
+      let effectiveMsg = params.msg;
+      let effectiveCtx = params.ctx;
+      const botUserId = params.ctx.me?.id ?? opts.botInfo?.id;
+      const acknowledgementBinding = await resolveAcknowledgementBindingForMessage(
+        params.msg,
+        botUserId,
+      );
+      if (acknowledgementBinding.kind === "clarify") {
+        logger.info(
+          {
+            accountId,
+            chatId: params.msg.chat.id,
+            inboundMessageId: params.msg.message_id,
+            messageThreadId: params.msg.message_thread_id,
+            candidateCount: acknowledgementBinding.candidateCount,
+            outcome: "clarify",
+          },
+          "telegram acknowledgement binding",
+        );
+        const clarification = await bot.api.sendMessage(
+          params.msg.chat.id,
+          "I'm not sure which earlier question that answers. Please reply directly to the question, or include a few words of context.",
+          {
+            reply_parameters: {
+              message_id: params.msg.message_id,
+              allow_sending_without_reply: true,
+            },
+          },
+        );
+        await recordMessageForReplyChain(clarification, undefined, botUserId);
+        const completed = { kind: "completed" } satisfies TelegramMessageProcessingResult;
+        if (spooledReplay) {
+          return await finalizeSpooledReplayResult(completed);
+        }
+        await commitDispatchDedupeClaims(params.dispatchDedupeClaims ?? []);
+        dispatchDedupeCommitted = true;
+        return completed;
+      }
+      if (acknowledgementBinding.kind === "bound") {
+        const expectedResponse = acknowledgementBinding.target.expectedResponseBinding;
+        effectiveMsg = {
+          ...params.msg,
+          reply_to_message: acknowledgementBinding.target.sourceMessage,
+        } as Message;
+        effectiveCtx = { ...params.ctx, message: effectiveMsg };
+        await recordMessageForReplyChain(effectiveMsg, undefined, botUserId);
+        logger.info(
+          {
+            accountId,
+            chatId: params.msg.chat.id,
+            inboundMessageId: params.msg.message_id,
+            messageThreadId: params.msg.message_thread_id,
+            replyToMessageId: acknowledgementBinding.target.messageId,
+            sourceInboundMessageId: expectedResponse?.inboundMessageId,
+            sessionId: expectedResponse?.sessionId,
+            runId: expectedResponse?.runId,
+            generation: expectedResponse?.generation,
+            outcome: "bound",
+          },
+          "telegram acknowledgement binding",
+        );
+      }
       // One assembled turn owns one config identity. Reloading below this point
       // can validate a model pin against a different allowlist than dispatch uses.
       const runtimeCfg = telegramDeps.getRuntimeConfig();
       const runtimeTelegramCfg = resolveTelegramAccount({ cfg: runtimeCfg, accountId }).config;
-      const replyChainNodes = await buildReplyChainForMessage(params.msg);
+      const replyChainNodes = await buildReplyChainForMessage(effectiveMsg);
       const isGroupConversation =
-        params.msg.chat.type === "group" || params.msg.chat.type === "supergroup";
+        effectiveMsg.chat.type === "group" || effectiveMsg.chat.type === "supergroup";
       const isForum =
-        params.msg.chat.type === "supergroup" &&
-        Boolean(params.msg.chat.is_forum || params.msg.is_topic_message);
+        effectiveMsg.chat.type === "supergroup" &&
+        Boolean(effectiveMsg.chat.is_forum || effectiveMsg.is_topic_message);
       const scopedThreadId = resolveTelegramForumThreadId({
         isForum,
-        messageThreadId: params.msg.message_thread_id,
+        messageThreadId: effectiveMsg.message_thread_id,
       });
       const { groupConfig, topicConfig } = resolveTelegramScopedGroupConfig(
         runtimeTelegramCfg,
-        params.msg.chat.id,
+        effectiveMsg.chat.id,
         scopedThreadId,
       );
       const scopedAllowFrom = firstDefined(topicConfig?.allowFrom, groupConfig?.allowFrom);
@@ -314,14 +377,14 @@ export function createTelegramHandlerMessageRuntime({
         }).include;
       };
       const { replyMedia, replyChain } = await resolveReplyMediaForChain(
-        params.ctx,
+        effectiveCtx,
         replyChainNodes,
         shouldHydrateReplyMedia,
         durableMediaReplay,
       );
       const promptContextMediaByMessageId = new Map<string, TelegramMediaRef>();
       const currentMessageId =
-        typeof params.msg.message_id === "number" ? String(params.msg.message_id) : undefined;
+        typeof effectiveMsg.message_id === "number" ? String(effectiveMsg.message_id) : undefined;
       for (const [index, media] of params.allMedia.entries()) {
         const messageId = media.sourceMessageId ?? (index === 0 ? currentMessageId : undefined);
         const promptMediaPath = media.path ? resolveTelegramPromptMediaPath(media.path) : undefined;
@@ -351,8 +414,8 @@ export function createTelegramHandlerMessageRuntime({
         }
       }
       const promptContext = await buildPromptContextForMessage(
-        params.ctx,
-        params.msg,
+        effectiveCtx,
+        effectiveMsg,
         replyChainNodes,
         runtimeCfg,
         runtimeTelegramCfg,
@@ -361,7 +424,7 @@ export function createTelegramHandlerMessageRuntime({
         params.promptContextMessageSelection,
       );
       const result = await processMessage(
-        params.ctx,
+        effectiveCtx,
         params.allMedia,
         params.storeAllowFrom,
         {

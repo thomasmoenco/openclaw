@@ -124,6 +124,7 @@ describeTelegramDispatch("dispatchTelegramMessage progress-updates", () => {
     context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
     mockDefaultSessionEntry();
     readLatestAssistantTextByIdentity.mockResolvedValue({
+      id: "assistant-progress-full-answer",
       text: fullAnswer,
       timestamp: Date.now() + 1_000,
     });

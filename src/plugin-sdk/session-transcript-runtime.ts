@@ -123,6 +123,11 @@ export type SessionTranscriptMessageEntry = {
   idempotencyKey?: string;
 };
 
+export type VisibleSessionTranscriptSnapshot = {
+  entries: SessionTranscriptMessageEntry[];
+  latestAssistantText?: LatestAssistantTranscriptText;
+};
+
 export type SessionTranscriptTarget = SessionTranscriptIdentity & {
   targetKind: "runtime-session";
 };
@@ -267,6 +272,33 @@ export async function readVisibleSessionTranscriptMessageEntries(
   return selectVisibleTranscriptEventEntries(await loadTranscriptEvents(params)).flatMap(
     projectVisibleMessageEntry,
   );
+}
+
+/** Reads one visible transcript snapshot and derives its latest assistant text. */
+export async function readVisibleSessionTranscriptSnapshotByIdentity(
+  params: SessionTranscriptTargetParams,
+): Promise<VisibleSessionTranscriptSnapshot> {
+  const entries = await readVisibleSessionTranscriptMessageEntries(params);
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.role !== "assistant") {
+      continue;
+    }
+    const text = extractAssistantVisibleText(entry.message)?.trim();
+    if (!text) {
+      continue;
+    }
+    const timestamp = (entry.message as { timestamp?: unknown }).timestamp;
+    return {
+      entries,
+      latestAssistantText: {
+        id: entry.entryId,
+        text,
+        ...(typeof timestamp === "number" && Number.isFinite(timestamp) ? { timestamp } : {}),
+      },
+    };
+  }
+  return { entries };
 }
 
 /**

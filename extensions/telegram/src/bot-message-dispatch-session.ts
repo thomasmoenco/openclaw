@@ -5,7 +5,8 @@ import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import {
   appendAssistantMirrorMessageByIdentity,
-  readLatestAssistantTextByIdentity,
+  readVisibleSessionTranscriptSnapshotByIdentity,
+  type SessionTranscriptMessageEntry,
 } from "openclaw/plugin-sdk/session-transcript-runtime";
 import { resolveTelegramConfigReasoningDefault } from "./agent-config.js";
 import type { TelegramBotDeps } from "./bot-deps.js";
@@ -122,9 +123,40 @@ export async function mirrorTelegramAssistantReplyToTranscript(params: {
   }
 }
 
+function readTranscriptTransportMessageId(message: unknown): string | undefined {
+  const metadata = (message as Record<string, unknown> | undefined)?.["__openclaw"] as
+    | { transport?: { messageId?: unknown } }
+    | undefined;
+  const transport = metadata?.transport;
+  return typeof transport?.messageId === "string" ? transport.messageId : undefined;
+}
+
+export function isTranscriptAssistantDescendedFromInboundMessage(params: {
+  entries: readonly SessionTranscriptMessageEntry[];
+  assistantMessageId: string;
+  inboundMessageId: string;
+}): boolean {
+  const entriesById = new Map(params.entries.map((entry) => [entry.entryId, entry]));
+  const assistant = entriesById.get(params.assistantMessageId);
+  if (assistant?.role !== "assistant") {
+    return false;
+  }
+  const visited = new Set<string>();
+  let current: SessionTranscriptMessageEntry | undefined = assistant;
+  while (current && !visited.has(current.entryId)) {
+    visited.add(current.entryId);
+    if (current.role === "user") {
+      return readTranscriptTransportMessageId(current.message) === params.inboundMessageId;
+    }
+    current = current.parentId ? entriesById.get(current.parentId) : undefined;
+  }
+  return false;
+}
+
 export function createCurrentTurnTranscriptFinalResolver(params: {
   agentId: string;
   dispatchStartedAt: number;
+  inboundMessageId?: string;
   loadFreshSessionEntry: FreshTelegramSessionEntryLoader;
   sessionKey?: string;
 }): () => Promise<CurrentTurnTranscriptFinal | undefined> {
@@ -137,13 +169,29 @@ export function createCurrentTurnTranscriptFinalResolver(params: {
       if (!entry?.sessionId) {
         return undefined;
       }
-      const latest = await readLatestAssistantTextByIdentity({
+      const snapshot = await readVisibleSessionTranscriptSnapshotByIdentity({
         agentId: params.agentId,
         sessionId: entry.sessionId,
         sessionKey: params.sessionKey,
         storePath,
       });
+      const latest = snapshot.latestAssistantText;
       if (!latest?.timestamp || latest.timestamp < params.dispatchStartedAt) {
+        return undefined;
+      }
+      if (!latest.id || !params.inboundMessageId) {
+        return undefined;
+      }
+      if (
+        !isTranscriptAssistantDescendedFromInboundMessage({
+          entries: snapshot.entries,
+          assistantMessageId: latest.id,
+          inboundMessageId: params.inboundMessageId,
+        })
+      ) {
+        logVerbose(
+          `telegram transcript final candidate rejected: session=${params.sessionKey} inbound=${params.inboundMessageId} assistant=${latest.id}`,
+        );
         return undefined;
       }
       return { ...(latest.id ? { messageId: latest.id } : {}), text: latest.text };

@@ -42,6 +42,7 @@ import {
   createLaneTextDeliverer,
   type LaneDeliveryResult,
 } from "./lane-delivery.js";
+import type { TelegramExpectedResponseCorrelation } from "./message-cache.js";
 import { recordOutboundMessageForPromptContext } from "./outbound-message-context.js";
 import {
   createTelegramPromptContextProjectionSequence,
@@ -53,6 +54,7 @@ import {
 } from "./prompt-context-projection.js";
 import { editMessageTelegram } from "./send.js";
 import { resolveTelegramTargetChatType } from "./targets.js";
+import type { TelegramTurnCorrelationFence } from "./turn-correlation.js";
 
 export function createTelegramDeliveryController(params: {
   bot: Bot;
@@ -80,6 +82,7 @@ export function createTelegramDeliveryController(params: {
   telegramDeps: TelegramBotDeps;
   textLimit: number;
   threadSpec: TelegramThreadSpec;
+  turnCorrelation: TelegramTurnCorrelationFence;
 }) {
   const { context } = params;
   const sessionKey = context.ctxPayload.SessionKey;
@@ -87,6 +90,7 @@ export function createTelegramDeliveryController(params: {
   const resolveCurrentTurnTranscriptFinal = createCurrentTurnTranscriptFinalResolver({
     agentId: context.route.agentId,
     dispatchStartedAt: params.dispatchStartedAt,
+    inboundMessageId: context.ctxPayload.MessageSid ?? String(context.msg.message_id),
     loadFreshSessionEntry: params.loadFreshSessionEntry,
     sessionKey,
   });
@@ -132,8 +136,24 @@ export function createTelegramDeliveryController(params: {
     message?: Message;
     text?: string;
     projection?: TelegramPromptContextProjection;
-  }): Promise<boolean> =>
-    (
+  }): Promise<boolean> => {
+    const correlation = params.turnCorrelation.snapshot();
+    let expectedResponseCorrelation: TelegramExpectedResponseCorrelation | undefined;
+    if (record.text?.includes("?") && correlation?.runId && correlation.sessionId && sessionKey) {
+      const currentSessionId = params.loadFreshSessionEntry(context.route.agentId, sessionKey).entry
+        ?.sessionId;
+      if (currentSessionId === correlation.sessionId) {
+        expectedResponseCorrelation = {
+          accountId: correlation.accountId,
+          conversationId: correlation.conversationId,
+          generation: correlation.generation,
+          inboundMessageId: correlation.inboundMessageId,
+          runId: correlation.runId,
+          sessionId: correlation.sessionId,
+        };
+      }
+    }
+    return (
       params.telegramDeps.recordOutboundMessageForPromptContext ??
       recordOutboundMessageForPromptContext
     )({
@@ -149,9 +169,11 @@ export function createTelegramDeliveryController(params: {
       messageId: record.messageId,
       ...(record.text ? { text: record.text } : {}),
       ...(record.projection ? { promptContextProjection: record.projection } : {}),
+      ...(expectedResponseCorrelation ? { expectedResponseCorrelation } : {}),
       ...(params.threadSpec.id !== undefined ? { messageThreadId: params.threadSpec.id } : {}),
       successfulSendThread: params.threadSpec,
     });
+  };
   const createPromptContextSequence = (source?: TelegramPromptContextSource) =>
     createTelegramPromptContextProjectionSequence({
       ...(source ? { source } : {}),

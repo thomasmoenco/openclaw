@@ -44,6 +44,7 @@ export async function runTelegramDispatchTurn(params: {
   streamMode: TelegramStreamMode;
   telegramCfg: TelegramAccountConfig;
   telegramDeps: TelegramBotDeps;
+  onAgentRunStart?: (runId: string) => void;
 }) {
   const { context } = params;
   const isRoomEvent = context.ctxPayload.InboundEventKind === "room_event";
@@ -267,6 +268,7 @@ export async function runTelegramDispatchTurn(params: {
                 }
               : undefined,
             onModelSelected,
+            onAgentRunStart: params.onAgentRunStart,
           },
         }),
       },
