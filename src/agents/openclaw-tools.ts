@@ -260,6 +260,7 @@ export function createOpenClawTools(
   // Scheduled turns keep delivery routing live, but Gateway authorization remains bound to the
   // authenticated creator account captured in the immutable scheduled authority envelope.
   const gatewayCallerAccountId = options?.gatewayCallerAccountId ?? options?.agentAccountId;
+  const hookAgentId = options?.requesterAgentIdOverride ?? sessionAgentId;
   const runtimeWebTools = getActiveRuntimeWebToolsMetadata();
   const sandbox =
     options?.sandboxRoot && options?.sandboxFsBridge
@@ -377,11 +378,11 @@ export function createOpenClawTools(
     lateBindRuntimeConfig: true,
   });
   options?.recordToolPrepStage?.("openclaw-tools:web-fetch-tool");
-  const messageTool = options?.disableMessageTool
+  const messageToolBase = options?.disableMessageTool
     ? null
     : createMessageTool({
         agentAccountId: options?.agentAccountId,
-        agentSessionKey: options?.agentSessionKey,
+        agentSessionKey: options?.runSessionKey ?? options?.agentSessionKey,
         runSessionKey: options?.runSessionKey,
         runId: options?.runId,
         agentId: sessionAgentId,
@@ -409,6 +410,14 @@ export function createOpenClawTools(
         senderIsOwner: options?.senderIsOwner,
         conversationReadOrigin: options?.conversationReadOrigin,
       });
+  const messageTool =
+    messageToolBase && options?.runSessionKey
+      ? createGatewayToolCallerWrapper(hookAgentId, {
+          ...options,
+          agentSessionKey: options.runSessionKey,
+          agentAccountId: gatewayCallerAccountId,
+        })(messageToolBase)
+      : messageToolBase;
   const heartbeatTool = options?.enableHeartbeatTool ? createHeartbeatResponseTool() : null;
   options?.recordToolPrepStage?.("openclaw-tools:message-tool");
   const nodesToolBase = createNodesTool({
@@ -731,7 +740,6 @@ export function createOpenClawTools(
   allTools = filterToolsByClientCaps(allTools, options?.clientCaps);
   options?.recordToolPrepStage?.("openclaw-tools:client-capabilities");
 
-  const hookAgentId = options?.requesterAgentIdOverride ?? sessionAgentId;
   const wrapGatewayCallerIdentity = createGatewayToolCallerWrapper(
     hookAgentId,
     options ? { ...options, agentAccountId: gatewayCallerAccountId } : options,
