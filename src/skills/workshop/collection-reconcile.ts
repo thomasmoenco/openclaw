@@ -67,6 +67,7 @@ import {
 } from "./ownership.js";
 import { readSkillProposalTargetTreeSha256 } from "./proposal-bundle.js";
 import { prepareSkillProposalDraft } from "./proposal-draft.js";
+import { isActiveSkillWorkshopProtected } from "./protection.js";
 import { withSkillCollectionLock } from "./target-lock.js";
 import { assertWritableSkillTarget, isWorkspaceOwnedSkillTarget } from "./workspace-skill-read.js";
 
@@ -151,6 +152,35 @@ export async function reconcileSkillCollection(params: {
         MAX_RECONCILED_SKILLS,
         params.approvedSkillNamesByAgent,
       );
+      const protectedPlannedNames: string[] = [];
+      for (const entry of plan) {
+        const active = currentByName.get(entry.name);
+        if (active && (await isActiveSkillWorkshopProtected(active.filePath))) {
+          protectedPlannedNames.push(entry.name);
+        }
+      }
+      if (protectedPlannedNames.length > 0) {
+        await assertCollectionReadsCurrent(
+          current,
+          params.readSkillHashes,
+          new Set(protectedPlannedNames),
+          MAX_RECONCILED_SKILL_BYTES,
+        );
+        params.assertCurrent?.();
+        const previousBackupId = await latestCommittedBackupId(
+          resolveSkillCollectionBackupRoot(workspaceDir, params.env),
+        );
+        return {
+          result: {
+            backupId: previousBackupId ?? "none",
+            kept: current.map((skill) => skill.name),
+            written: [],
+            dropped: [],
+            pendingProtectedSkillNames: protectedPlannedNames,
+          },
+          changes: [],
+        };
+      }
       const plannedNames = new Set(plan.map((entry) => entry.name));
       const outcome = {
         kept: current.filter((skill) => !plannedNames.has(skill.name)).map((skill) => skill.name),
@@ -217,6 +247,30 @@ export async function reconcileSkillCollection(params: {
         agentId: params.agentId,
         env: params.env,
       });
+      if (createProposals.size > 0) {
+        await assertCollectionMutationCurrent(
+          current,
+          params.readSkillTreeHashes,
+          plannedNames,
+          prepared,
+        );
+        params.assertCurrent?.();
+        // Keep the entire mixed plan atomic: a new name waits for operator review,
+        // and update/drop siblings wait for the next collection reconciliation.
+        const previousBackupId = await latestCommittedBackupId(
+          resolveSkillCollectionBackupRoot(workspaceDir, params.env),
+        );
+        const result: SkillCollectionReconcileResult = {
+          backupId: previousBackupId ?? "none",
+          kept: current.map((skill) => skill.name),
+          written: [],
+          dropped: [],
+          pendingCreateProposalIds: [...createProposals.values()].map(
+            (proposal) => proposal.record.id,
+          ),
+        };
+        return { result, changes: [] };
+      }
       // Any failure from here through promotion must retire the staged pending
       // create rows: they target files that will not exist and would consume
       // the maxPending budget until an operator cleans them up.

@@ -10,11 +10,30 @@ import { createSkillProposalEvent, dispatchSkillProposalChanged } from "./plugin
 import { proposeCreateSkill } from "./service.js";
 import { writeSkillProposalRollback } from "./store-sqlite-rollback.js";
 import { commitPendingSkillProposalTransition } from "./store-sqlite-transition.js";
+import { readSkillProposal, readSkillProposalManifest } from "./store.js";
 import {
   SKILL_WORKSHOP_ROLLBACK_SCHEMA,
   type SkillProposalReadResult,
   type SkillProposalRecord,
 } from "./types.js";
+
+export function isReusableCollectionCreateProposal(
+  proposal: SkillProposalReadResult,
+  mutation: PreparedWorkspaceSkillMutation,
+): boolean {
+  if (proposal.record.status !== "pending") {
+    return false;
+  }
+  const candidateSupport = (proposal.supportFiles ?? []).map(({ path, content }) => ({
+    path,
+    content,
+  }));
+  const expectedSupport = mutation.supportFiles.map(({ path, content }) => ({ path, content }));
+  return (
+    stripProposalFrontmatterForSkill(proposal.content) === mutation.skillFile.content &&
+    JSON.stringify(candidateSupport) === JSON.stringify(expectedSupport)
+  );
+}
 
 export async function prepareCollectionCreateProposals(params: {
   workspaceDir: string;
@@ -36,6 +55,14 @@ export async function prepareCollectionCreateProposals(params: {
   );
   const proposals = new Map<string, SkillProposalReadResult>();
   const staged: SkillProposalReadResult[] = [];
+  const store = params.env ? { env: params.env } : {};
+  const scope = {
+    workspaceDir: params.workspaceDir,
+    ...(params.agentId ? { agentId: params.agentId } : {}),
+  };
+  const pending = (await readSkillProposalManifest(store, scope)).proposals.filter(
+    (proposal) => proposal.kind === "create" && proposal.status === "pending",
+  );
   try {
     for (const mutation of params.prepared) {
       if (mutation.mode !== "create") {
@@ -45,7 +72,25 @@ export async function prepareCollectionCreateProposals(params: {
       if (!entry) {
         throw new Error(`Missing collection create decision for ${mutation.skillDir}.`);
       }
-      const proposal = await proposeCreateSkill({
+      let proposal: SkillProposalReadResult | undefined;
+      for (const candidate of pending.filter((item) => item.skillKey === entry.name)) {
+        const inspected = await readSkillProposal(candidate.id, store, scope, { reconcile: false });
+        if (!inspected) {
+          throw new Error(
+            `Pending collection create proposal could not be inspected: ${candidate.id}`,
+          );
+        }
+        if (inspected.record.status !== "pending") {
+          throw new Error(
+            `Collection create proposal changed status during reconciliation: ${candidate.id}`,
+          );
+        }
+        if (isReusableCollectionCreateProposal(inspected, mutation)) {
+          proposal = inspected;
+          break;
+        }
+      }
+      proposal ??= await proposeCreateSkill({
         workspaceDir: params.workspaceDir,
         ...(params.agentId ? { agentId: params.agentId } : {}),
         ...(params.config ? { config: params.config } : {}),
@@ -57,7 +102,21 @@ export async function prepareCollectionCreateProposals(params: {
         createdBy: "skill-workshop",
         autonomousCapture: true,
       });
-      staged.push(proposal);
+      if (!pending.some((candidate) => candidate.id === proposal.record.id)) {
+        staged.push(proposal);
+        pending.push({
+          id: proposal.record.id,
+          kind: "create",
+          status: "pending",
+          title: proposal.record.title,
+          description: proposal.record.description,
+          skillName: proposal.record.target.skillName,
+          skillKey: proposal.record.target.skillKey,
+          createdAt: proposal.record.createdAt,
+          updatedAt: proposal.record.updatedAt,
+          scanState: proposal.record.scan.state,
+        });
+      }
       if (stripProposalFrontmatterForSkill(proposal.content) !== mutation.skillFile.content) {
         throw new Error(`Collection create proposal changed prepared content: ${entry.name}`);
       }

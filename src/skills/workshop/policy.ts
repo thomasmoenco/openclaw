@@ -9,6 +9,7 @@ import { logDebug } from "../../logger.js";
 import type { PluginHookBeforeToolCallResult } from "../../plugins/hook-before-tool-call-result.js";
 import { createLazyRuntimeNamedExport } from "../../shared/lazy-runtime.js";
 import { resolveSkillWorkshopConfig } from "./config.js";
+import { isActiveSkillWorkshopProtected } from "./protection.js";
 
 // Proposal reconciliation and skill-install dependencies belong to actual approval-detail lookup.
 const loadPendingSkillProposalResolver = createLazyRuntimeNamedExport(
@@ -118,6 +119,8 @@ async function resolveLifecycleApprovalDescription(params: {
 }): Promise<{
   description: string;
   proposalId?: string;
+  proposalKind?: "create" | "update";
+  protectedTarget?: boolean;
 }> {
   if (!params.workspaceDir) {
     return { description: params.fallback };
@@ -140,6 +143,11 @@ async function resolveLifecycleApprovalDescription(params: {
         bodySizeKb: formatBodySizeKb(proposal.content),
       }),
       proposalId: record.id,
+      proposalKind: record.kind,
+      protectedTarget:
+        record.kind === "update"
+          ? await isActiveSkillWorkshopProtected(record.target.skillFile)
+          : false,
     };
   } catch (error) {
     // Approving blind is the failure this record exists to make diagnosable:
@@ -200,9 +208,6 @@ export async function resolveSkillWorkshopToolApproval(params: {
     return undefined;
   }
   const config = resolveSkillWorkshopConfig(resolveApprovalConfig(params.config));
-  if (config.approvalPolicy === "auto") {
-    return undefined;
-  }
   const text = lifecycleApprovalText(action);
   const approvalDescription =
     action === "restore_collection"
@@ -212,8 +217,18 @@ export async function resolveSkillWorkshopToolApproval(params: {
           workspaceDir: params.workspaceDir,
           fallback: text.description,
         });
+  // Creating a new executable skill always requires an operator decision. The
+  // general auto policy remains valid for update/reject/quarantine lifecycle calls.
+  if (
+    config.approvalPolicy === "auto" &&
+    (action !== "apply" ||
+      (approvalDescription.proposalKind === "update" && !approvalDescription.protectedTarget))
+  ) {
+    return undefined;
+  }
   return {
     requireApproval: {
+      pluginId: "workspace-skills",
       ...text,
       description: approvalDescription.description,
       timeoutMs: SKILL_WORKSHOP_APPROVAL_TIMEOUT_MS,

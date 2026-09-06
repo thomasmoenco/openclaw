@@ -15,6 +15,7 @@ import { hashSkillProposalRevision } from "./revision-hash.js";
 import {
   createSkillProposalId,
   hashSkillProposalContent,
+  readSkillProposal,
   resolveSkillProposalTarget,
   writeSkillProposal,
 } from "./store.js";
@@ -171,6 +172,9 @@ export async function proposeCreateSkill(
     }),
     store: proposalStoreOptions(input.env),
   });
+  if (!("sequence" in event)) {
+    throw new Error("Unexpected pending proposal reuse for create.");
+  }
   await dispatchSkillProposalChanged({
     event,
     record,
@@ -311,22 +315,64 @@ export async function proposeUpdateSkill(
     ...(goal ? { goal } : {}),
     ...(evidence ? { evidence } : {}),
   };
-  const event = await writeSkillProposal({
-    record,
-    content: proposalContent,
-    supportFiles,
-    workspaceDir: input.workspaceDir,
-    ownerAgentId: input.agentId ?? origin?.agentId,
-    maxPending: config.maxPending,
-    event: createSkillProposalEvent({
+  const store = proposalStoreOptions(input.env);
+  const write = async (): Promise<
+    | { kind: "reused"; proposal: SkillProposalReadResult }
+    | { kind: "created"; event: Awaited<ReturnType<typeof writeSkillProposal>> }
+  > => {
+    if (input.autonomousCapture) {
+      // Serialize only this skill target across processes. An autonomous variant with the
+      // same operator-facing description must revise the pending proposal explicitly.
+      const result = await writeSkillProposal({
+        record,
+        content: proposalContent,
+        supportFiles,
+        workspaceDir: input.workspaceDir,
+        ownerAgentId: input.agentId ?? origin?.agentId,
+        maxPending: config.maxPending,
+        event: createSkillProposalEvent({ record, type: "created", actor: input.eventActor }),
+        reusePending: { skillKey: record.target.skillKey, description: record.description },
+        store,
+      });
+      if (!("sequence" in result)) {
+        const read = await readSkillProposal(
+          result.id,
+          store,
+          { workspaceDir: input.workspaceDir },
+          { reconcile: false },
+        );
+        if (!read) {
+          throw new Error("Matching pending Skill Workshop proposal could not be read.");
+        }
+        return { kind: "reused", proposal: { ...read, reusedPendingProposal: true } };
+      }
+      return { kind: "created", event: result };
+    }
+    const event = await writeSkillProposal({
       record,
-      type: "created",
-      actor: input.eventActor,
-    }),
-    store: proposalStoreOptions(input.env),
-  });
+      content: proposalContent,
+      supportFiles,
+      workspaceDir: input.workspaceDir,
+      ownerAgentId: input.agentId ?? origin?.agentId,
+      maxPending: config.maxPending,
+      event: createSkillProposalEvent({
+        record,
+        type: "created",
+        actor: input.eventActor,
+      }),
+      store,
+    });
+    if (!("sequence" in event)) {
+      throw new Error("Unexpected pending proposal reuse for manual update.");
+    }
+    return { kind: "created", event };
+  };
+  const result = await write();
+  if (result.kind === "reused") {
+    return result.proposal;
+  }
   await dispatchSkillProposalChanged({
-    event,
+    event: result.event,
     record,
     workspaceDir: input.workspaceDir,
     ...(input.agentId ? { agentId: input.agentId } : {}),

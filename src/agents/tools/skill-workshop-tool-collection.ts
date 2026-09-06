@@ -124,7 +124,11 @@ export async function executeSkillCollectionReconcile(params: {
     }
   }
   return textResult(
-    `Reconciled the skill collection: kept ${result.kept.length}, wrote ${result.written.length}, dropped ${result.dropped.length}. Backup ${result.backupId}.`,
+    result.pendingProtectedSkillNames?.length
+      ? `Kept the skill collection unchanged; ${result.pendingProtectedSkillNames.length} protected skill change(s) require Thomas GO.`
+      : result.pendingCreateProposalIds?.length
+        ? `Kept the skill collection unchanged; ${result.pendingCreateProposalIds.length} new skill proposal(s) are pending operator review.`
+        : `Reconciled the skill collection: kept ${result.kept.length}, wrote ${result.written.length}, dropped ${result.dropped.length}. Backup ${result.backupId}.`,
     result,
   );
 }

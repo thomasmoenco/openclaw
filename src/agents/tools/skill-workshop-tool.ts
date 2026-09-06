@@ -672,7 +672,14 @@ export function createSkillWorkshopTool(options: SkillWorkshopToolOptions): AnyA
           throw new ToolInputError(`action must be one of ${SKILL_WORKSHOP_ACTIONS.join(", ")}`);
         }
 
-        if (reservesMutation && options.proposalMutationBudget) {
+        if (proposal.reusedPendingProposal) {
+          contentText = `Reused pending skill proposal ${proposal.record.id} for ${proposal.record.target.skillName}; revise it explicitly to change the draft.`;
+          if (reservesMutation && options.proposalMutationBudget) {
+            options.proposalMutationBudget.remaining += 1;
+          }
+        }
+
+        if (reservesMutation && !proposal.reusedPendingProposal && options.proposalMutationBudget) {
           const mutatedProposalIds =
             options.proposalMutationBudget.mutatedProposalIds ?? new Set<string>();
           mutatedProposalIds.add(proposal.record.id);
@@ -687,7 +694,11 @@ export function createSkillWorkshopTool(options: SkillWorkshopToolOptions): AnyA
           });
         }
 
-        if (foregroundRepair && workshopConfig.autonomous.mode === "auto") {
+        if (
+          foregroundRepair &&
+          !proposal.reusedPendingProposal &&
+          workshopConfig.autonomous.mode === "auto"
+        ) {
           const autonomous = await applyAutonomousSkillProposal({
             workspaceDir: options.workspaceDir,
             agentId: options.agentId,
@@ -697,11 +708,14 @@ export function createSkillWorkshopTool(options: SkillWorkshopToolOptions): AnyA
             proposal,
             reason: "Foreground repair of a used skill",
           });
-          if (autonomous.status === "pending") {
+          if (autonomous.status !== "applied") {
             return proposalResult(
               { ...proposal, record: autonomous.record },
               {
-                contentText: `Skill ${autonomous.record.target.skillName} is user-authored; proposal ${autonomous.record.id} awaits operator review.`,
+                contentText:
+                  autonomous.status === "pending"
+                    ? `Proposal ${autonomous.record.id} for ${autonomous.record.target.skillName} awaits operator review.`
+                    : `Proposal ${autonomous.record.id} is already ${autonomous.status}; no automatic skill change was made.`,
               },
             );
           }

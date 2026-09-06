@@ -330,6 +330,8 @@ export type SkillProposalReadResult = {
   revisionHash: string;
   content: string;
   supportFiles?: PreparedSkillProposalSupportFile[];
+  /** The autonomous capture reused an already-pending proposal; no proposal or event was created. */
+  reusedPendingProposal?: true;
 };
 
 export type SkillProposalApplyResult = {
