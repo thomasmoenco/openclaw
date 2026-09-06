@@ -214,6 +214,7 @@ export async function resolveSkillWorkshopToolApproval(params: {
         });
   return {
     requireApproval: {
+      pluginId: "workspace-skills",
       ...text,
       description: approvalDescription.description,
       timeoutMs: SKILL_WORKSHOP_APPROVAL_TIMEOUT_MS,

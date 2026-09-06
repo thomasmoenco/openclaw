@@ -59,6 +59,7 @@ describe("resolveSkillWorkshopToolApproval", () => {
     });
 
     expect(result?.requireApproval).toMatchObject({
+      pluginId: "workspace-skills",
       title: "Apply workspace skill proposal",
       severity: "warning",
       timeoutMs: 70_000,
