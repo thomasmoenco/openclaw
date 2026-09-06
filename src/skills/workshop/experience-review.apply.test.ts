@@ -339,17 +339,19 @@ describe("experience review auto apply", () => {
       expect(manifest.proposals).toHaveLength(1);
       expect(manifest.proposals[0]).toMatchObject({
         skillKey: "deployment-preflight",
-        status: error ? "pending" : "applied",
+        status: "pending",
       });
       const skillFile = `${workspaceDir}/skills/deployment-preflight/SKILL.md`;
+      await expect(fs.stat(skillFile)).rejects.toMatchObject({ code: "ENOENT" });
       if (error) {
-        await expect(fs.stat(skillFile)).rejects.toMatchObject({ code: "ENOENT" });
         expect(Object.values(readSkillReviewOutcomes().experienceReviews)[0]).toMatchObject({
           outcome: "failed",
           error: expect.stringContaining(error),
         });
       } else {
-        await expect(fs.readFile(skillFile, "utf8")).resolves.toContain("Read the manifest");
+        expect(Object.values(readSkillReviewOutcomes().experienceReviews)[0]).toMatchObject({
+          outcome: "proposed",
+        });
       }
       expect(runEmbeddedAgent).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -724,7 +726,7 @@ describe("experience review auto apply", () => {
     });
   });
 
-  it("records a failed apply and leaves the capture pending without retrying", async () => {
+  it("does not attempt a live create when the target path would fail", async () => {
     const workspaceDir = await tempDirs.make("openclaw-experience-apply-failure-workspace-");
     // A file where the skill directory must go makes the live write fail after the proposal exists.
     await fs.mkdir(path.join(workspaceDir, "skills"), { recursive: true });
@@ -761,17 +763,14 @@ describe("experience review auto apply", () => {
       config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
     };
 
-    await expect(
-      runSkillExperienceReview(candidate, { getCurrentConfig: () => candidate.config ?? {} }),
-    ).rejects.toThrow();
+    await runSkillExperienceReview(candidate, { getCurrentConfig: () => candidate.config ?? {} });
 
     expect(runEmbeddedAgent).toHaveBeenCalledTimes(1);
     expect((await listSkillProposals({ workspaceDir })).proposals[0]).toMatchObject({
       status: "pending",
     });
     expect(Object.values(readSkillReviewOutcomes().experienceReviews)[0]).toMatchObject({
-      outcome: "failed",
-      error: expect.stringContaining("directory"),
+      outcome: "proposed",
     });
   });
 

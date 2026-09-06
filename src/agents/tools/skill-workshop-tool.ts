@@ -708,11 +708,14 @@ export function createSkillWorkshopTool(options: SkillWorkshopToolOptions): AnyA
             proposal,
             reason: "Foreground repair of a used skill",
           });
-          if (autonomous.status === "pending") {
+          if (autonomous.status !== "applied") {
             return proposalResult(
               { ...proposal, record: autonomous.record },
               {
-                contentText: `Skill ${autonomous.record.target.skillName} is user-authored; proposal ${autonomous.record.id} awaits operator review.`,
+                contentText:
+                  autonomous.status === "pending"
+                    ? `Proposal ${autonomous.record.id} for ${autonomous.record.target.skillName} awaits operator review.`
+                    : `Proposal ${autonomous.record.id} is already ${autonomous.status}; no automatic skill change was made.`,
               },
             );
           }

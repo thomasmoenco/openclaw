@@ -27,6 +27,8 @@ export type SkillCollectionReconcileResult = {
   kept: string[];
   written: string[];
   dropped: Array<{ name: string; reason: string }>;
+  pendingCreateProposalIds?: string[];
+  pendingProtectedSkillNames?: string[];
 };
 
 export type SkillCollectionRestoreResult = {

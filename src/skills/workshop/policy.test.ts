@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearRuntimeConfigSnapshot,
@@ -11,7 +12,7 @@ import {
 } from "../../test-utils/openclaw-test-state.js";
 import { createTrackedTempDirs } from "../../test-utils/tracked-temp-dirs.js";
 import { resolveSkillWorkshopToolApproval } from "./policy.js";
-import { proposeCreateSkill } from "./service.js";
+import { applySkillProposal, proposeCreateSkill, proposeUpdateSkill } from "./service.js";
 
 const tempDirs = createTrackedTempDirs();
 let testState: OpenClawTestState;
@@ -37,6 +38,67 @@ afterEach(async () => {
 });
 
 describe("resolveSkillWorkshopToolApproval", () => {
+  it("requires approval for create apply under auto while updates remain automatic", async () => {
+    const workspaceDir = await tempDirs.make("openclaw-skill-workshop-auto-create-policy-");
+    const created = await proposeCreateSkill({
+      workspaceDir,
+      env: testState.env,
+      name: "new-procedure",
+      description: "New procedure",
+      content: "# New procedure\n",
+    });
+    const autoConfig = { skills: { workshop: { approvalPolicy: "auto" as const } } };
+    await expect(
+      resolveSkillWorkshopToolApproval({
+        toolName: "skill_workshop",
+        toolParams: { action: "apply", proposal_id: created.record.id },
+        workspaceDir,
+        config: autoConfig,
+      }),
+    ).resolves.toMatchObject({ requireApproval: { title: "Apply workspace skill proposal" } });
+
+    await applySkillProposal({
+      workspaceDir,
+      env: testState.env,
+      proposalId: created.record.id,
+      expectedRevisionHash: created.revisionHash,
+      eventActor: { type: "gateway" },
+    });
+    const updated = await proposeUpdateSkill({
+      workspaceDir,
+      env: testState.env,
+      skillName: "new-procedure",
+      content: "# Updated procedure\n",
+    });
+    await expect(
+      resolveSkillWorkshopToolApproval({
+        toolName: "skill_workshop",
+        toolParams: { action: "apply", proposal_id: updated.record.id },
+        workspaceDir,
+        config: autoConfig,
+      }),
+    ).resolves.toBeUndefined();
+
+    await fs.writeFile(
+      created.record.target.skillFile,
+      "---\nname: new-procedure\ndescription: New procedure\nopenclaw-workshop-protection: thomas-go-required\n---\n\n# Protected\n",
+    );
+    const protectedUpdate = await proposeUpdateSkill({
+      workspaceDir,
+      env: testState.env,
+      skillName: "new-procedure",
+      content: "# Protected update\n",
+    });
+    await expect(
+      resolveSkillWorkshopToolApproval({
+        toolName: "skill_workshop",
+        toolParams: { action: "apply", proposal_id: protectedUpdate.record.id },
+        workspaceDir,
+        config: autoConfig,
+      }),
+    ).resolves.toMatchObject({ requireApproval: { title: "Apply workspace skill proposal" } });
+  });
+
   it("describes the target proposal and bounds the approval wait", async () => {
     const workspaceDir = await tempDirs.make("openclaw-skill-workshop-policy-workspace-");
     const description = "d".repeat(160);
@@ -188,13 +250,13 @@ describe("resolveSkillWorkshopToolApproval", () => {
     );
   });
 
-  it("allows lifecycle actions without approval by default", async () => {
+  it("fails closed when an auto-policy apply target cannot be identified", async () => {
     await expect(
       resolveSkillWorkshopToolApproval({
         toolName: "skill_workshop",
         toolParams: { action: "apply", proposal_id: "weather-20260530-a1b2c3d4e5" },
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ requireApproval: { title: "Apply workspace skill proposal" } });
   });
 
   it("requires pending approval before restoring a skill collection", async () => {
@@ -216,7 +278,7 @@ describe("resolveSkillWorkshopToolApproval", () => {
     });
   });
 
-  it("uses runtime config when lifecycle hook config is absent", async () => {
+  it("uses runtime auto policy but fails closed for an unresolved apply target", async () => {
     setRuntimeConfigSnapshot({
       skills: {
         workshop: {
@@ -230,7 +292,7 @@ describe("resolveSkillWorkshopToolApproval", () => {
         toolName: "skill_workshop",
         toolParams: { action: "apply", proposal_id: "weather-20260530-a1b2c3d4e5" },
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ requireApproval: { title: "Apply workspace skill proposal" } });
   });
 
   it("keeps the default auto policy when runtime config loading throws", async () => {

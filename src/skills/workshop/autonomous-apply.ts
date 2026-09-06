@@ -1,16 +1,19 @@
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isWorkshopOwnedSkillDir } from "./ownership.js";
+import { isActiveSkillWorkshopProtected } from "./protection.js";
 import { applySkillProposal } from "./service.js";
 import { readSkillProposalRecord, updateSkillProposalRecord } from "./store.js";
 import { withSkillProposalCommitLock } from "./target-lock.js";
-import type { SkillProposalReadResult, SkillProposalRecord } from "./types.js";
+import type { SkillProposalReadResult, SkillProposalRecord, SkillProposalStatus } from "./types.js";
 
 const USER_AUTHORED_PENDING_REASON = "user-authored skill; awaiting operator review";
+const CREATE_PENDING_REASON = "new skill; awaiting operator review";
+const PROTECTED_PENDING_REASON = "protected skill; awaiting Thomas GO";
 
 type AutonomousSkillProposal = Pick<SkillProposalReadResult, "record" | "revisionHash">;
 
 type AutonomousSkillProposalResult =
-  | { status: "pending"; record: SkillProposalRecord }
+  | { status: Exclude<SkillProposalStatus, "applied">; record: SkillProposalRecord }
   | { status: "applied"; record: SkillProposalRecord; targetSkillFile: string };
 
 export async function applyAutonomousSkillProposal(params: {
@@ -24,10 +27,23 @@ export async function applyAutonomousSkillProposal(params: {
 }): Promise<AutonomousSkillProposalResult> {
   const store = params.env ? { env: params.env } : {};
   // Decides pending-vs-apply only; the apply transition rechecks ownership under its commit lock.
-  if (
-    params.proposal.record.kind !== "create" &&
-    !isWorkshopOwnedSkillDir(params.workspaceDir, params.proposal.record.target.skillDir, store)
-  ) {
+  const protectedTarget =
+    params.proposal.record.kind === "update"
+      ? await isActiveSkillWorkshopProtected(params.proposal.record.target.skillFile)
+      : false;
+  const pendingReason =
+    params.proposal.record.kind === "create"
+      ? CREATE_PENDING_REASON
+      : protectedTarget
+        ? PROTECTED_PENDING_REASON
+        : !isWorkshopOwnedSkillDir(
+              params.workspaceDir,
+              params.proposal.record.target.skillDir,
+              store,
+            )
+          ? USER_AUTHORED_PENDING_REASON
+          : undefined;
+  if (pendingReason) {
     // Same commit lock as apply: an operator may apply this proposal between the ownership
     // check and this write, and the pending reason must not overwrite that outcome.
     const record = await withSkillProposalCommitLock(
@@ -44,14 +60,16 @@ export async function applyAutonomousSkillProposal(params: {
         const pending = {
           ...current,
           updatedAt: new Date().toISOString(),
-          statusReason: USER_AUTHORED_PENDING_REASON,
+          statusReason: pendingReason,
         };
         await updateSkillProposalRecord({ record: pending, store });
         return pending;
       },
       store,
     );
-    return { status: "pending", record };
+    return record.status === "applied"
+      ? { status: "applied", record, targetSkillFile: record.target.skillFile }
+      : { status: record.status, record };
   }
   const applied = await applySkillProposal({
     workspaceDir: params.workspaceDir,

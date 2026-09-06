@@ -23,6 +23,7 @@ import {
   inspectSkillProposal,
   listSkillProposals,
   proposeCreateSkill,
+  rejectSkillProposal,
 } from "./service.js";
 import { withSkillCollectionLock } from "./target-lock.js";
 
@@ -38,6 +39,20 @@ const dispatchCommittedSkillChangeBestEffort = vi.hoisted(() =>
   vi.fn(async (_event: { action: string }) => {}),
 );
 const snapshotCommittedSkillArtifactBestEffort = vi.hoisted(() => vi.fn(async () => undefined));
+const afterProposalManifestRead = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("./store.js", async () => {
+  const actual = await vi.importActual<typeof import("./store.js")>("./store.js");
+  return {
+    ...actual,
+    readSkillProposalManifest: async (
+      ...args: Parameters<typeof actual.readSkillProposalManifest>
+    ) => {
+      const manifest = await actual.readSkillProposalManifest(...args);
+      await afterProposalManifestRead();
+      return manifest;
+    },
+  };
+});
 vi.mock("node:fs/promises", async () => {
   const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
   const cp: typeof actual.cp = async (source, destination, options) => {
@@ -59,6 +74,7 @@ let testState: OpenClawTestState;
 let workspaceDir: string;
 
 beforeEach(async () => {
+  afterProposalManifestRead.mockReset().mockImplementation(async () => {});
   copyDirectoryBefore.mockReset();
   copyDirectoryBefore.mockResolvedValue(undefined);
   copyDirectoryAfter.mockReset();
@@ -107,10 +123,11 @@ describe("skill collection reconciliation", () => {
     ).resolves.toContain("# Original");
   });
 
-  it("creates a new skill without a read receipt and records its proposal", async () => {
-    await reconcileSkillCollection({
+  it("keeps collection-created skills pending without writing a live skill", async () => {
+    const result = await reconcileSkillCollection({
       workspaceDir,
       env: testState.env,
+      config: { skills: { workshop: { maxPending: 1 } } },
       readSkillHashes: new Map(),
       readSkillTreeHashes: new Map(),
       plan: [
@@ -122,14 +139,183 @@ describe("skill collection reconciliation", () => {
         },
       ],
     });
+    expect(result).toMatchObject({
+      written: [],
+      dropped: [],
+      pendingCreateProposalIds: [expect.any(String)],
+    });
 
     const proposals = await listSkillProposals({ workspaceDir, env: testState.env });
     expect(proposals.proposals).toEqual([
-      expect.objectContaining({ kind: "create", skillKey: "learned", status: "applied" }),
+      expect.objectContaining({ kind: "create", skillKey: "learned", status: "pending" }),
     ]);
-    expect(listWritableSkillCollection(workspaceDir, { env: testState.env })).toEqual([
-      expect.objectContaining({ name: "learned", workshopOwned: true }),
+    expect(listWritableSkillCollection(workspaceDir, { env: testState.env })).toEqual([]);
+    await expect(
+      fs.stat(path.join(workspaceDir, "skills", "learned", "SKILL.md")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const repeated = await reconcileSkillCollection({
+      workspaceDir,
+      env: testState.env,
+      config: { skills: { workshop: { maxPending: 1 } } },
+      readSkillHashes: new Map(),
+      readSkillTreeHashes: new Map(),
+      plan: [
+        {
+          action: "write",
+          name: "learned",
+          description: "Learned procedure",
+          content: "# Learned\n",
+        },
+      ],
+    });
+    expect(repeated.pendingCreateProposalIds).toEqual(result.pendingCreateProposalIds);
+    expect((await listSkillProposals({ workspaceDir, env: testState.env })).proposals).toHaveLength(
+      1,
+    );
+
+    await expect(
+      reconcileSkillCollection({
+        workspaceDir,
+        env: testState.env,
+        config: { skills: { workshop: { maxPending: 1 } } },
+        readSkillHashes: new Map(),
+        readSkillTreeHashes: new Map(),
+        plan: [
+          {
+            action: "write",
+            name: "learned",
+            description: "Learned procedure",
+            content: "# Changed\n",
+          },
+        ],
+      }),
+    ).rejects.toThrow("pending proposal limit");
+  });
+
+  it("aborts instead of replacing a create proposal rejected after the manifest snapshot", async () => {
+    const input = {
+      workspaceDir,
+      env: testState.env,
+      config: { skills: { workshop: { maxPending: 1 } } } satisfies OpenClawConfig,
+      readSkillHashes: new Map<string, string>(),
+      readSkillTreeHashes: new Map<string, string>(),
+      plan: [
+        {
+          action: "write" as const,
+          name: "learned",
+          description: "Learned procedure",
+          content: "# Learned\n",
+        },
+      ],
+    };
+    const first = await reconcileSkillCollection(input);
+    const proposalId = first.pendingCreateProposalIds?.[0];
+    expect(proposalId).toBeTruthy();
+
+    afterProposalManifestRead.mockImplementationOnce(async () => {
+      afterProposalManifestRead.mockImplementation(async () => {});
+      await rejectSkillProposal({
+        workspaceDir,
+        env: testState.env,
+        proposalId: proposalId!,
+        reason: "Operator rejected stale autonomous create",
+      });
+    });
+
+    await expect(reconcileSkillCollection(input)).rejects.toThrow(
+      `Collection create proposal changed status during reconciliation: ${proposalId}`,
+    );
+    const proposals = await listSkillProposals({ workspaceDir, env: testState.env });
+    expect(proposals.proposals).toEqual([
+      expect.objectContaining({ id: proposalId, kind: "create", status: "rejected" }),
     ]);
+    await expect(fs.stat(path.join(workspaceDir, "skills", "learned"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("holds an entire mixed collection plan when one entry creates a skill", async () => {
+    await writeWorkshopOwnedSkills([
+      { name: "existing", description: "Existing procedure", body: "# Initial\n" },
+    ]);
+    const prior = await reconcileSkillCollection({
+      workspaceDir,
+      env: testState.env,
+      ...(await readCollectionReceipt()),
+      plan: [
+        {
+          action: "write",
+          name: "existing",
+          description: "Existing procedure",
+          content: "# Before\n",
+        },
+      ],
+    });
+    const result = await reconcileSkillCollection({
+      workspaceDir,
+      env: testState.env,
+      ...(await readCollectionReceipt()),
+      plan: [
+        {
+          action: "write",
+          name: "existing",
+          description: "Existing procedure",
+          content: "# After\n",
+        },
+        { action: "write", name: "new-name", description: "New name", content: "# New\n" },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      written: [],
+      dropped: [],
+      pendingCreateProposalIds: [expect.any(String)],
+    });
+    expect(result.backupId).toBe(prior.backupId);
+    await expect(
+      fs.readFile(path.join(workspaceDir, "skills", "existing", "SKILL.md"), "utf8"),
+    ).resolves.toContain("# Before");
+    await expect(fs.stat(path.join(workspaceDir, "skills", "new-name"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("holds the entire collection when a protected active skill would change", async () => {
+    await writeWorkshopOwnedSkills([
+      {
+        name: "protected",
+        description: "Protected procedure",
+        body: "---\nname: protected\ndescription: Protected procedure\nopenclaw-workshop-protection: thomas-go-required\n---\n\n# Protected\n",
+      },
+      { name: "ordinary", description: "Ordinary procedure", body: "# Ordinary\n" },
+    ]);
+    const result = await reconcileSkillCollection({
+      workspaceDir,
+      env: testState.env,
+      ...(await readCollectionReceipt()),
+      plan: [
+        {
+          action: "write",
+          name: "protected",
+          description: "Protected procedure",
+          content: "# Changed protected\n",
+        },
+        { action: "drop", name: "ordinary", reason: "No longer needed" },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      written: [],
+      dropped: [],
+      pendingProtectedSkillNames: ["protected"],
+    });
+    await expect(
+      fs.readFile(path.join(workspaceDir, "skills", "protected", "SKILL.md"), "utf8"),
+    ).resolves.toContain("# Protected");
+    await expect(
+      fs.stat(path.join(workspaceDir, "skills", "ordinary", "SKILL.md")),
+    ).resolves.toBeTruthy();
   });
 
   it("releases ownership when a dropped skill path is recreated by the user", async () => {

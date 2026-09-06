@@ -288,6 +288,56 @@ describe("skill workshop proposals", () => {
     );
   });
 
+  it("keeps autonomous updates to a protected Workshop skill pending", async () => {
+    const workspaceDir = await tempDirs.make("openclaw-workshop-protected-auto-");
+    const created = await proposeCreateSkill({
+      workspaceDir,
+      env: testEnv,
+      name: "protected-procedure",
+      description: "Protected procedure",
+      content:
+        "---\nname: protected-procedure\ndescription: Protected procedure\nopenclaw-workshop-protection: thomas-go-required\n---\n\n# Protected\n",
+    });
+    await applySkillProposal({
+      workspaceDir,
+      env: testEnv,
+      proposalId: created.record.id,
+      expectedRevisionHash: created.revisionHash,
+    });
+    const update = await proposeUpdateSkill({
+      workspaceDir,
+      env: testEnv,
+      skillName: "protected-procedure",
+      content: "# Changed\n",
+    });
+
+    const result = await applyAutonomousSkillProposal({
+      workspaceDir,
+      env: testEnv,
+      proposal: update,
+      reason: "autonomous review",
+    });
+
+    expect(result).toMatchObject({
+      status: "pending",
+      record: { statusReason: "protected skill; awaiting Thomas GO" },
+    });
+    await expect(fs.readFile(created.record.target.skillFile, "utf8")).resolves.toContain(
+      "# Protected",
+    );
+    await applySkillProposal({
+      workspaceDir,
+      env: testEnv,
+      proposalId: update.record.id,
+      expectedRevisionHash: update.revisionHash,
+      eventActor: { type: "gateway" },
+      reason: "Thomas approved this exact protected update",
+    });
+    await expect(fs.readFile(created.record.target.skillFile, "utf8")).resolves.toContain(
+      "# Changed",
+    );
+  });
+
   it("keeps an operator apply when autonomous review holds a stale pending snapshot", async () => {
     const workspaceDir = await makeWorkspace();
     await writeSkill({
@@ -307,11 +357,29 @@ describe("skill workshop proposals", () => {
       eventActor: { type: "gateway" },
     });
 
-    await applyAutonomousSkillProposal({ workspaceDir, proposal: snapshot, reason: "review" });
+    await expect(
+      applyAutonomousSkillProposal({ workspaceDir, proposal: snapshot, reason: "review" }),
+    ).resolves.toMatchObject({ status: "applied", record: { status: "applied" } });
 
     const inspected = await inspectSkillProposal(snapshot.record.id, { workspaceDir });
     expect(inspected?.record.status).toBe("applied");
     expect(inspected?.record.statusReason).toBeUndefined();
+  });
+
+  it("reports an operator rejection truthfully when autonomous create handling arrives later", async () => {
+    const workspaceDir = await makeWorkspace();
+    const proposal = await proposeCreateSkill({
+      workspaceDir,
+      name: "rejected-create",
+      description: "Rejected create",
+      content: "# Rejected create\n",
+      autonomousCapture: true,
+    });
+    await rejectSkillProposal({ workspaceDir, proposalId: proposal.record.id });
+
+    await expect(
+      applyAutonomousSkillProposal({ workspaceDir, proposal, reason: "review" }),
+    ).resolves.toMatchObject({ status: "rejected", record: { status: "rejected" } });
   });
 
   it.runIf(process.platform !== "win32")(
