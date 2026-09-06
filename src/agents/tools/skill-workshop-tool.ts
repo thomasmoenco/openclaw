@@ -672,7 +672,14 @@ export function createSkillWorkshopTool(options: SkillWorkshopToolOptions): AnyA
           throw new ToolInputError(`action must be one of ${SKILL_WORKSHOP_ACTIONS.join(", ")}`);
         }
 
-        if (reservesMutation && options.proposalMutationBudget) {
+        if (proposal.reusedPendingProposal) {
+          contentText = `Reused pending skill proposal ${proposal.record.id} for ${proposal.record.target.skillName}; revise it explicitly to change the draft.`;
+          if (reservesMutation && options.proposalMutationBudget) {
+            options.proposalMutationBudget.remaining += 1;
+          }
+        }
+
+        if (reservesMutation && !proposal.reusedPendingProposal && options.proposalMutationBudget) {
           const mutatedProposalIds =
             options.proposalMutationBudget.mutatedProposalIds ?? new Set<string>();
           mutatedProposalIds.add(proposal.record.id);
@@ -687,7 +694,11 @@ export function createSkillWorkshopTool(options: SkillWorkshopToolOptions): AnyA
           });
         }
 
-        if (foregroundRepair && workshopConfig.autonomous.mode === "auto") {
+        if (
+          foregroundRepair &&
+          !proposal.reusedPendingProposal &&
+          workshopConfig.autonomous.mode === "auto"
+        ) {
           const autonomous = await applyAutonomousSkillProposal({
             workspaceDir: options.workspaceDir,
             agentId: options.agentId,

@@ -150,6 +150,7 @@ export function proposalResult(
       proposedVersion: proposal.record.proposedVersion,
       draftHash: proposal.record.draftHash,
       revisionHash: proposal.revisionHash,
+      ...(proposal.reusedPendingProposal ? { reusedPendingProposal: true as const } : {}),
       ...(proposal.record.evaluation ? { evaluation: proposal.record.evaluation } : {}),
       ...(options.inspect ? { inspect: options.inspect } : {}),
     },

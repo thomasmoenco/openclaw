@@ -240,15 +240,16 @@ export async function writeSkillProposal(params: {
   ownerAgentId?: string;
   maxPending: number;
   event: NewSkillProposalEvent;
+  reusePending?: { skillKey: string; description: string };
   store?: SkillWorkshopStoreOptions;
-}): Promise<SkillProposalEvent> {
+}): Promise<SkillProposalEvent | SkillProposalRecord> {
   assertProposalId(params.record.id);
   assertSkillProposalContentSize(params.content);
   ensureSkillWorkshopSchema(params.store);
   await stageSkillProposalGeneration(params);
 
   try {
-    return runOpenClawStateWriteTransaction(
+    const result = await runOpenClawStateWriteTransaction(
       ({ db }) => {
         const kysely = getNodeSqliteKysely<SkillWorkshopDatabase>(db);
         const existing = executeSqliteQueryTakeFirstSync(
@@ -260,6 +261,30 @@ export async function writeSkillProposal(params: {
         );
         if (existing) {
           throw new Error(`Skill proposal already exists: ${params.record.id}`);
+        }
+        if (params.reusePending) {
+          const pending = executeSqliteQuerySync(
+            db,
+            kysely
+              .selectFrom("skill_workshop_proposals")
+              .selectAll()
+              .where("workspace_dir", "=", path.resolve(params.workspaceDir))
+              .where("status", "=", "pending"),
+          ).rows;
+          for (const row of pending) {
+            const record = parseSkillProposalRow(row);
+            if (!record) {
+              throw new Error(
+                "Cannot deduplicate autonomous proposal against invalid pending state.",
+              );
+            }
+            if (
+              record.target.skillKey === params.reusePending.skillKey &&
+              record.description === params.reusePending.description
+            ) {
+              return record;
+            }
+          }
         }
         const count = executeSqliteQueryTakeFirstSync(
           db,
@@ -282,6 +307,10 @@ export async function writeSkillProposal(params: {
       databaseOptions(params.store),
       { operationLabel: "skill-workshop.proposal.create" },
     );
+    if (!("sequence" in result)) {
+      await discardSkillProposalGeneration(params.record, params.store).catch(() => undefined);
+    }
+    return result;
   } catch (error) {
     const committed = readCommittedSkillProposalTransition({
       record: params.record,

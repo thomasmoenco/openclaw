@@ -60,6 +60,52 @@ afterEach(async () => {
 });
 
 describe("skill_workshop tool", () => {
+  it("reports autonomous pending reuse without consuming another mutation", async () => {
+    const workspaceDir = await fs.realpath(await tempDirs.make("openclaw-skill-dedupe-tool-"));
+    const seeded = await proposeCreateSkill({
+      workspaceDir,
+      env: testState.env,
+      name: "dedupe-tool",
+      description: "Dedupe tool",
+      content: "# Original\n",
+    });
+    await applySkillProposal({
+      workspaceDir,
+      env: testState.env,
+      proposalId: seeded.record.id,
+      expectedRevisionHash: seeded.revisionHash,
+    });
+    const proposalMutationBudget: SkillWorkshopProposalMutationBudget = { remaining: 2 };
+    const tool = createSkillWorkshopTool({
+      workspaceDir,
+      env: testState.env,
+      agentId: "main",
+      autonomousCapture: true,
+      proposalMutationBudget,
+    });
+    const first = await tool.execute("first", {
+      action: "update",
+      skill_name: "dedupe-tool",
+      description: "One correction",
+      proposal_content: "# First variant\n",
+    });
+    const second = await tool.execute("second", {
+      action: "update",
+      skill_name: "dedupe-tool",
+      description: "One correction",
+      proposal_content: "# Second variant\n",
+    });
+
+    expect((second.content[0] as { text: string }).text).toContain("Reused pending skill proposal");
+    expect((second.details as { id: string }).id).toBe((first.details as { id: string }).id);
+    expect(second.details).toMatchObject({ reusedPendingProposal: true });
+    expect(proposalMutationBudget).toMatchObject({
+      remaining: 1,
+      completed: 1,
+      successfulMutations: 1,
+    });
+  });
+
   it("gives an isolated collection review only read and reconcile", async () => {
     const workspaceDir = await fs.realpath(await tempDirs.make("openclaw-skill-collection-tool-"));
     // Drop targets must be Workshop-owned: seed via an applied create proposal, not a raw write.

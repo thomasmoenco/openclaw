@@ -1633,6 +1633,88 @@ describe("skill workshop proposals", () => {
     ).rejects.toThrow("proposal content is too large");
   });
 
+  it("atomically reuses an autonomous pending update with the same skill and description", async () => {
+    const workspaceDir = await makeWorkspace();
+    await createOwnedSkill({
+      workspaceDir,
+      name: "deduped-update",
+      description: "Deduped update",
+      body: "# Original\n",
+    });
+
+    const [first, second] = await Promise.all([
+      proposeUpdateSkill({
+        workspaceDir,
+        env: testEnv,
+        skillName: "deduped-update",
+        description: "Keep one pending correction",
+        content: "# Variant one\n",
+        autonomousCapture: true,
+        origin: { agentId: "main", sessionKey: "first-session", runId: "first-run" },
+      }),
+      proposeUpdateSkill({
+        workspaceDir,
+        env: testEnv,
+        skillName: "deduped-update",
+        description: "Keep one pending correction",
+        content: "# Variant two\n",
+        autonomousCapture: true,
+        origin: { agentId: "main", sessionKey: "second-session", runId: "second-run" },
+      }),
+    ]);
+
+    expect(second.record.id).toBe(first.record.id);
+    expect([first.reusedPendingProposal, second.reusedPendingProposal]).toContain(true);
+    expect(second.record.origin?.sessionKey).toBe(first.record.origin?.sessionKey);
+    expect(second.content).toBe(first.content);
+    expect(
+      (await listSkillProposals({ workspaceDir, env: testEnv })).proposals.filter(
+        (proposal) => proposal.status === "pending",
+      ),
+    ).toHaveLength(1);
+
+    const explicitRevision = await reviseSkillProposal({
+      workspaceDir,
+      env: testEnv,
+      proposalId: first.record.id,
+      expectedRevisionHash: first.revisionHash,
+      content: "# Explicit revision\n",
+    });
+    expect(explicitRevision.record.id).toBe(first.record.id);
+    expect(explicitRevision.content).toContain("# Explicit revision");
+  });
+
+  it("fails closed when pending proposal metadata cannot be checked for autonomous dedupe", async () => {
+    const workspaceDir = await makeWorkspace();
+    await createOwnedSkill({
+      workspaceDir,
+      name: "dedupe-invalid-state",
+      description: "Dedupe invalid state",
+      body: "# Original\n",
+    });
+    const pending = await proposeUpdateSkill({
+      workspaceDir,
+      env: testEnv,
+      skillName: "dedupe-invalid-state",
+      description: "Existing correction",
+      content: "# Existing\n",
+    });
+    openOpenClawStateDatabase({ env: testEnv })
+      .db.prepare("UPDATE skill_workshop_proposals SET record_json = ? WHERE proposal_id = ?")
+      .run("{}", pending.record.id);
+
+    await expect(
+      proposeUpdateSkill({
+        workspaceDir,
+        env: testEnv,
+        skillName: "dedupe-invalid-state",
+        description: "Another correction",
+        content: "# Another\n",
+        autonomousCapture: true,
+      }),
+    ).rejects.toThrow("invalid pending state");
+  });
+
   it("bounds proposal descriptions before writing proposal state", async () => {
     const workspaceDir = await makeWorkspace();
     await expect(
