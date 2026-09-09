@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildDailyProvenanceRecord,
   hashDailyMemoryContent,
+  normalizeMemoryObservedAt,
   rebaseDailyProvenanceRecord,
   resolveDailyLineProvenance,
   resolveDailyRangeProvenance,
@@ -9,6 +10,26 @@ import {
 } from "./daily-provenance.js";
 
 describe("daily memory provenance", () => {
+  it("normalizes filesystem timestamps before STRICT SQLite storage", () => {
+    const content = "trusted line\n";
+    const staleRecord: DailyProvenanceRecord = {
+      fileHash: hashDailyMemoryContent(content),
+      originClass: "agent",
+      observedAt: 1,
+      segments: [],
+    };
+
+    const lines = resolveDailyLineProvenance({
+      content,
+      record: staleRecord,
+      defaultObservedAt: 1_234.75,
+    });
+
+    expect(lines.every((line) => Number.isSafeInteger(line.observedAt))).toBe(true);
+    expect(lines).toMatchObject([{ observedAt: 1_234 }, { observedAt: 1_234 }]);
+    expect(normalizeMemoryObservedAt(Number.NaN, 5_678.9)).toBe(5_678);
+  });
+
   it("keeps trusted lines promotable after a legacy quarantined file", () => {
     const before = "untrusted line\n";
     const after = `${before}trusted line\n`;

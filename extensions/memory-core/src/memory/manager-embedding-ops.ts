@@ -34,6 +34,7 @@ import { MAX_TIMER_TIMEOUT_MS, resolveTimerTimeoutMs } from "openclaw/plugin-sdk
 import { sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { runSqliteImmediateTransactionSync } from "openclaw/plugin-sdk/sqlite-runtime";
 import { chunkItems } from "openclaw/plugin-sdk/text-chunking";
+import { normalizeMemoryObservedAt } from "../daily-provenance.js";
 import { hasMemorySessionTombstone } from "../memory-entry-origins.js";
 import { withMemoryWorkspaceLock } from "../memory-workspace-lock.js";
 import { readSessionResetRecallCutoffMetadata } from "../session-reset-recall-metadata.js";
@@ -917,7 +918,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
               id,
               provenance.originClass,
               provenance.sessionKind,
-              provenance.observedAt,
+              normalizeMemoryObservedAt(provenance.observedAt, now),
               provenance.supersedesKey ?? null,
             );
           if (vectorReady && embedding.length > 0) {

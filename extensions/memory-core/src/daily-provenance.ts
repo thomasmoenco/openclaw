@@ -15,6 +15,14 @@ export function hashDailyMemoryContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
+export function normalizeMemoryObservedAt(value: number, fallback = 0): number {
+  const candidate = Number.isFinite(value) ? value : fallback;
+  if (!Number.isFinite(candidate)) {
+    return 0;
+  }
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(candidate)));
+}
+
 function segmentFor(params: {
   content: string;
   startOffset: number;
@@ -272,11 +280,12 @@ export function resolveDailyLineProvenance(params: {
   defaultObservedAt: number;
 }): MemoryEntryProvenance[] {
   const ranges = lineOffsetRanges(params.content);
+  const defaultObservedAt = normalizeMemoryObservedAt(params.defaultObservedAt);
   if (!params.record) {
     return ranges.map(() => ({
       originClass: "agent",
       sessionKind: "unknown",
-      observedAt: params.defaultObservedAt,
+      observedAt: defaultObservedAt,
     }));
   }
 
@@ -284,7 +293,9 @@ export function resolveDailyLineProvenance(params: {
   if (!segments) {
     const originClass = params.record.originClass === "untrusted" ? "untrusted" : "agent";
     const observedAt =
-      originClass === "untrusted" ? params.record.observedAt : params.defaultObservedAt;
+      originClass === "untrusted"
+        ? normalizeMemoryObservedAt(params.record.observedAt, defaultObservedAt)
+        : defaultObservedAt;
     return ranges.map(() => ({ originClass, sessionKind: "unknown", observedAt }));
   }
 
@@ -300,8 +311,11 @@ export function resolveDailyLineProvenance(params: {
       : "agent";
     const observedAt =
       overlapping.length > 0
-        ? Math.max(...overlapping.map((segment) => segment.observedAt))
-        : params.defaultObservedAt;
+        ? normalizeMemoryObservedAt(
+            Math.max(...overlapping.map((segment) => segment.observedAt)),
+            defaultObservedAt,
+          )
+        : defaultObservedAt;
     return { originClass, sessionKind: "unknown", observedAt };
   });
 }
@@ -320,6 +334,8 @@ export function resolveDailyRangeProvenance(params: {
   return {
     originClass: lines.some((line) => line.originClass === "untrusted") ? "untrusted" : "agent",
     sessionKind: "unknown",
-    observedAt: Math.max(params.defaultObservedAt, ...lines.map((line) => line.observedAt)),
+    observedAt: normalizeMemoryObservedAt(
+      Math.max(params.defaultObservedAt, ...lines.map((line) => line.observedAt)),
+    ),
   };
 }
