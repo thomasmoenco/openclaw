@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { extractErrorCode } from "openclaw/plugin-sdk/error-runtime";
+import { rebaseMemoryArtifactWriteProvenance } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
 import {
   formatMemoryDreamingDay,
   type MemoryDreamingPhaseName,
@@ -107,7 +108,21 @@ export async function writeDailyDreamingPhaseBlock(params: {
       endMarker: markers.end,
       body,
     });
-    await replaceDreamingMarkdownFile(inlinePath, withTrailingNewline(updated));
+    const finalContent = withTrailingNewline(updated);
+    const relativePath = path.relative(params.workspaceDir, inlinePath).replaceAll(path.sep, "/");
+    const rollback = await rebaseMemoryArtifactWriteProvenance({
+      workspaceDir: params.workspaceDir,
+      relativePath,
+      contentBefore: original,
+      contentAfter: finalContent,
+      observedAt: nowMs,
+    });
+    try {
+      await replaceDreamingMarkdownFile(inlinePath, finalContent);
+    } catch (error) {
+      await rollback?.();
+      throw error;
+    }
   }
 
   if (shouldWriteSeparate(params.storage)) {

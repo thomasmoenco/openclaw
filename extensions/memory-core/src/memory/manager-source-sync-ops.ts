@@ -1,4 +1,5 @@
 // Memory Core plugin module owns memory and session source indexing.
+import fs from "node:fs/promises";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/memory-core-host-engine-foundation";
 import {
   buildSessionEntry,
@@ -9,6 +10,8 @@ import {
   MEMORY_INDEX_FTS_TABLE,
   runWithConcurrency,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
+import { listMemoryArtifactProvenance } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
+import { hashDailyMemoryContent, resolveDailyLineProvenance } from "../daily-provenance.js";
 import { MemoryManagerSessionSyncOps } from "./manager-session-sync-ops.js";
 import {
   isMemorySessionIndexable,
@@ -60,11 +63,42 @@ export abstract class MemoryManagerSourceSyncOps extends MemoryManagerSessionSyn
         ? this.db.prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ?`)
         : null;
 
-    const fileEntries = await resolveMemorySourceFileEntries({
+    const baseFileEntries = await resolveMemorySourceFileEntries({
       workspaceDir: this.workspaceDir,
       settings: this.settings,
       concurrency: this.getIndexConcurrency(),
     });
+    const provenanceEntries = await listMemoryArtifactProvenance({
+      workspaceDir: this.workspaceDir,
+    });
+    const provenanceByPath = new Map(
+      provenanceEntries.map((entry) => [
+        entry.relativePath.replaceAll("\\", "/"),
+        entry.provenance,
+      ]),
+    );
+    const fileEntries = await runWithConcurrency(
+      baseFileEntries.map((entry) => async (): Promise<MemoryIndexEntry> => {
+        const record = entry.kind === "multimodal" ? undefined : provenanceByPath.get(entry.path);
+        if (!record) {
+          return entry;
+        }
+        const content = await fs.readFile(entry.absPath, "utf-8").catch(() => undefined);
+        if (content === undefined || hashDailyMemoryContent(content) !== entry.hash) {
+          return entry;
+        }
+        return {
+          ...entry,
+          content,
+          lineProvenance: resolveDailyLineProvenance({
+            content,
+            record,
+            defaultObservedAt: entry.mtimeMs,
+          }),
+        };
+      }),
+      this.getIndexConcurrency(),
+    );
     log.debug("memory sync: indexing memory files", {
       files: fileEntries.length,
       needsFullReindex: params.needsFullReindex,
