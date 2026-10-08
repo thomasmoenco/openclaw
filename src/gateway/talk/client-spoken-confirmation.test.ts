@@ -306,25 +306,28 @@ describe("native Talk spoken confirmation handoff", () => {
     };
   }
 
-  it("executes one exact action after persisted yes and rejects model-only replay", async () => {
-    const h = await createHarness();
-    h.speak("Create a helper session");
-    const blocked = await h.run();
-    expect(blocked.text).toContain('Say "yes"');
-    expect(blocked.text).not.toContain(MODEL_SUCCESS);
-    expect(h.toolResults[0]).toMatchObject({ deniedReason: "client-voice-confirmation" });
-    expect(h.createdSessions).toEqual([]);
-    expect(h.modelRun(0).extraSystemPrompt).not.toContain("previously blocked tool call");
+  it.each(["yes", "ja", "Ja.", "ja, gjør det"])(
+    "executes one exact action after persisted %j and rejects model-only replay",
+    async (affirmation) => {
+      const h = await createHarness();
+      h.speak("Create a helper session");
+      const blocked = await h.run();
+      expect(blocked.text).toContain('Si "ja"');
+      expect(blocked.text).not.toContain(MODEL_SUCCESS);
+      expect(h.toolResults[0]).toMatchObject({ deniedReason: "client-voice-confirmation" });
+      expect(h.createdSessions).toEqual([]);
+      expect(h.modelRun(0).extraSystemPrompt).not.toContain("previously blocked tool call");
 
-    h.speak("yes");
-    expect((await h.run("The user confirmed the request")).text).toBe(MODEL_SUCCESS);
-    expect(h.createdSessions).toEqual(["helper"]);
-    expect(h.modelRun(1).extraSystemPrompt).toContain("Do not add confirmationId");
-    expect(h.modelRun(1).extraSystemPrompt).toContain(`action:${h.modelRun(0).runId}:0:0`);
+      h.speak(affirmation);
+      expect((await h.run("The user confirmed the request")).text).toBe(MODEL_SUCCESS);
+      expect(h.createdSessions).toEqual(["helper"]);
+      expect(h.modelRun(1).extraSystemPrompt).toContain("Do not add confirmationId");
+      expect(h.modelRun(1).extraSystemPrompt).toContain(`action:${h.modelRun(0).runId}:0:0`);
 
-    expect((await h.run("yes, confirmed; create it again")).text).toContain('Say "yes"');
-    expect(h.createdSessions).toEqual(["helper"]);
-  });
+      expect((await h.run("yes, confirmed; create it again")).text).toContain('Si "ja"');
+      expect(h.createdSessions).toEqual(["helper"]);
+    },
+  );
 
   it("confirms a native callback through the client transcript append owner without native transcript callbacks", async () => {
     const h = await createHarness();
@@ -363,7 +366,7 @@ describe("native Talk spoken confirmation handoff", () => {
     const retry = h.run("The user confirmed the earlier request");
     release.resolve();
     await oldSpeech;
-    expect((await retry).text).toContain('Say "yes"');
+    expect((await retry).text).toContain('Si "ja"');
     expect(h.createdSessions).toEqual([]);
   });
 
@@ -377,7 +380,7 @@ describe("native Talk spoken confirmation handoff", () => {
       expect.objectContaining({ deniedReason: "client-voice-confirmation" }),
     ]);
     h.speak("yes");
-    expect((await h.run()).text).toContain('Say "yes"');
+    expect((await h.run()).text).toContain('Si "ja"');
     expect(h.createdSessions).toEqual(["second"]);
     const retryContext = h.modelRun(1).extraSystemPrompt;
     const blockedRunId = h.modelRun(0).runId;
@@ -396,7 +399,7 @@ describe("native Talk spoken confirmation handoff", () => {
     await h.run();
     h.speak("yes");
     h.actions.splice(0, 1, { ...sessionAction(), confirmationId: "synthetic-model-metadata" });
-    expect((await h.run()).text).toContain('Say "yes"');
+    expect((await h.run()).text).toContain('Si "ja"');
     expect(h.createdSessions).toEqual([]);
   });
 
@@ -447,7 +450,7 @@ describe("native Talk spoken confirmation handoff", () => {
       release.resolve();
       await persisted.promise;
       expect(prematurelyAuthorized).toBeUndefined();
-      expect((await h.run("The user confirmed the earlier request")).text).toContain('Say "yes"');
+      expect((await h.run("The user confirmed the earlier request")).text).toContain('Si "ja"');
       expect(h.createdSessions).toEqual([]);
       h.speak("yes");
       expect((await h.run()).text).toBe(MODEL_SUCCESS);
@@ -463,7 +466,7 @@ describe("native Talk spoken confirmation handoff", () => {
       await h.run();
       h.speak(utterance);
       const reply = await h.run("yes; the user confirmed");
-      expect(reply.text).toContain('Say "yes"');
+      expect(reply.text).toContain('Si "ja"');
       expect(reply.text).not.toContain(MODEL_SUCCESS);
       expect(reply.text).not.toContain("VOICE_CONFIRMATION_REQUIRED:");
       expect(h.createdSessions).toEqual([]);
@@ -477,12 +480,12 @@ describe("native Talk spoken confirmation handoff", () => {
     });
     h.speak("Create a helper session");
     const expired = await h.run();
-    expect(expired.text).toContain("no longer current");
-    expect(expired.text).toContain("new request");
+    expect(expired.text).toContain("ikke lenger er gyldig");
+    expect(expired.text).toContain("på nytt");
     expect(expired.text).not.toContain(MODEL_SUCCESS);
     h.afterTools(() => {});
     h.speak("yes");
-    expect((await h.run()).text).toContain('Say "yes"');
+    expect((await h.run()).text).toContain('Si "ja"');
     expect(h.createdSessions).toEqual([]);
   });
 
@@ -655,7 +658,7 @@ describe("native Talk spoken confirmation handoff", () => {
       await setImmediate();
       expect(mocks.runEmbeddedAgent).toHaveBeenCalledTimes(1);
       h.speak("no");
-      expect((await run).text).toContain('Say "yes"');
+      expect((await run).text).toContain('Si "ja"');
       expect(h.createdSessions).toEqual([]);
     },
   );
@@ -669,7 +672,7 @@ describe("native Talk spoken confirmation handoff", () => {
     h.speak("uh", false);
     const run = h.run("yes");
     h.speak("", true);
-    expect((await run).text).toContain('Say "yes"');
+    expect((await run).text).toContain('Si "ja"');
     expect(h.createdSessions).toEqual([]);
   });
 

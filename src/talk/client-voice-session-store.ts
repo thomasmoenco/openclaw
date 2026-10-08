@@ -44,6 +44,8 @@ export type ClientVoiceSessionRecord = {
 };
 
 export type ClientVoiceRunBinding = Readonly<{
+  /** Server-owned live resolver; never serialized or accepted from client params. */
+  isOwnerCurrent?: () => boolean;
   agentId: string;
   voiceSessionId: string;
   sessionKey: string;

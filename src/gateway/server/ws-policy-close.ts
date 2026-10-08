@@ -27,7 +27,9 @@ const responses = new WeakMap<RespondFn, PolicyResponse>();
 const clients = new WeakMap<GatewayPolicyClient, PolicyClientState>();
 const invalidationListeners = new WeakMap<GatewayPolicyClient, Set<() => void>>();
 
-export function hasCurrentGatewayPolicyClientSource(client: GatewayPolicyClient): boolean {
+export function hasCurrentGatewayPolicyClientSource(
+  client: Pick<GatewayPolicyClient, "invalidated" | "sourceInvalidated">,
+): boolean {
   return !(client.sourceInvalidated ?? client.invalidated ?? false);
 }
 

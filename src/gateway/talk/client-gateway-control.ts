@@ -28,6 +28,7 @@ import { ADMIN_SCOPE, WRITE_SCOPE } from "../operator-scopes.js";
 import { resolveChatSendCallerContext } from "../server-methods/gateway-client-identity.js";
 import type { GatewayRequestContext } from "../server-methods/shared-types.js";
 import { formatError } from "../server-utils.js";
+import { hasCurrentGatewayPolicyClientSource } from "../server/ws-policy-close.js";
 import type {
   LifecycleBoundTalkAgentConsult,
   ReusableTalkAgentConsult,
@@ -51,6 +52,8 @@ const pendingOwners = new Set<GatewayControlOwner>();
 
 export type TalkAgentConsultAuthority = {
   senderIsOwner: boolean;
+  /** Reads the same authenticated connection authority, not a client payload. */
+  isOwnerCurrent?: () => boolean;
   toolsAllow?: string[];
   replyCaller?: ReturnType<typeof resolveChatSendCallerContext>;
 };
@@ -68,7 +71,17 @@ export function resolveTalkAgentConsultAuthority(
     );
   }
   if (senderIsOwner || scopes?.includes(WRITE_SCOPE) === true) {
-    return { senderIsOwner, ...(replyCaller ? { replyCaller } : {}) };
+    return {
+      senderIsOwner,
+      ...(client
+        ? {
+            isOwnerCurrent: () =>
+              hasCurrentGatewayPolicyClientSource(client) &&
+              client.connect.scopes?.includes(ADMIN_SCOPE) === true,
+          }
+        : {}),
+      ...(replyCaller ? { replyCaller } : {}),
+    };
   }
   return {
     senderIsOwner: false,

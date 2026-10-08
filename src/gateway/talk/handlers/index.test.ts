@@ -122,6 +122,7 @@ const mocks = vi.hoisted(() => ({
   resolveClientVoiceAgentSessionId: vi.fn<() => string | undefined>(() => "session-main"),
   assertClientVoiceSessionOpen: vi.fn(),
   registerClientVoiceConsultRun: vi.fn(),
+  bindClientVoiceNativeAuthority: vi.fn(),
   resolveOpenClientVoiceSessionId: vi.fn(),
   consultRealtimeVoiceAgent: vi.fn(async (_params?: unknown) => ({ text: "agent answer" })),
   closeTalkClientGatewayControlSession: vi.fn(async () => false),
@@ -228,6 +229,7 @@ vi.mock("../../../talk/client-voice-session.js", async (importOriginal) => {
     createOrResumeClientVoiceSession: mocks.createOrResumeClientVoiceSession,
     ensureClientVoiceAgentSessionEntry: mocks.ensureClientVoiceAgentSessionEntry,
     registerClientVoiceConsultRun: mocks.registerClientVoiceConsultRun,
+    bindClientVoiceNativeAuthority: mocks.bindClientVoiceNativeAuthority,
     resolveClientVoiceAgentSessionId: mocks.resolveClientVoiceAgentSessionId,
     resolveOpenClientVoiceSessionId: mocks.resolveOpenClientVoiceSessionId,
   };
