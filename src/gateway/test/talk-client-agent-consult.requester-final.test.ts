@@ -39,6 +39,13 @@ const mocks = vi.hoisted(() => ({
   runEmbeddedAgentCore: vi.fn(),
 }));
 
+// Requester-final fixture supplies a mock registerRun; real binding is covered
+// by client-voice-owner-parity and spoken-confirmation integration tests.
+vi.mock("../../talk/client-voice-session.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../talk/client-voice-session.js")>()),
+  bindClientVoiceNativeAuthority: vi.fn(),
+}));
+
 vi.mock("../../agents/admitted-run-context.js", () => ({
   createOperationalRunInstanceRef: mocks.createOperationalRunInstanceRef,
   prepareAgentRunAdmission: mocks.prepareAgentRunAdmission,
