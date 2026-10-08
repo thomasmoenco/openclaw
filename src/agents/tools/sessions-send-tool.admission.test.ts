@@ -71,6 +71,26 @@ describe("sessions_send dispatch admission", () => {
     await state.cleanup();
   });
 
+  it("rejects an unconfigured display name before dispatching the Talk followup", async () => {
+    const callGateway = vi.fn();
+    const tool = createSessionsSendTool({
+      agentSessionKey: requesterSessionKey,
+      config,
+      callGateway,
+    });
+    const result = await tool.execute("talk-followup", {
+      agentId: "hugin",
+      mode: "followup",
+      timeoutSeconds: 0,
+      message: "Kontroller kun Iris-varsler.",
+    });
+    expect(result.details).toMatchObject({
+      status: "error",
+      error: 'Agent "hugin" not found. Run openclaw agents list to see configured agents.',
+    });
+    expect(callGateway).not.toHaveBeenCalled();
+  });
+
   it("keeps the accepted reply source until the detached flow actually settles", async () => {
     const context = createContext();
     const owner = createOperatorClient({ profileId: "send-owner", scopes: ["operator.write"] });

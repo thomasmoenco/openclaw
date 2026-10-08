@@ -28,10 +28,10 @@ import {
   ClientVoiceMutationDigestOwner,
   deliverClientVoiceMutationDigest,
 } from "./client-voice-mutation-digest-owner.js";
+import { hasLiveConsultRun, voiceSessionByRunId } from "./client-voice-run-bindings.js";
 import {
   assertVoiceSessionOwnership as assertOwnership,
   type ClientVoiceRunBinding,
-  type ClientVoiceSessionRecord,
   type ClientVoiceToolEffect,
   operationKey,
   parseStoredVoiceSessionRecord as parseStoredRecord,
@@ -49,23 +49,16 @@ import {
   VOICE_TRANSCRIPT_QUEUE_POLICY,
 } from "./voice-transcript.js";
 
-const voiceSessionByRunId = new Map<string, ClientVoiceRunBinding>();
+export {
+  bindClientVoiceNativeAuthority,
+  resolveClientVoiceRunBinding,
+} from "./client-voice-run-bindings.js";
+
 const voiceSessionOperations = createVoiceTranscriptOperationRegistry(
   VOICE_TRANSCRIPT_QUEUE_POLICY,
 );
 let unsubscribeToolEffects: (() => void) | undefined;
 let unsubscribeRunCompletion: (() => void) | undefined;
-
-function hasLiveConsultRun(record: ClientVoiceSessionRecord): boolean {
-  return record.consultRunIds.some((runId) => {
-    const binding = voiceSessionByRunId.get(runId);
-    return (
-      binding?.agentId === record.agentId &&
-      binding.voiceSessionId === record.voiceSessionId &&
-      binding.sessionKey === record.sessionKey
-    );
-  });
-}
 
 async function runVoiceSessionOperation<T>(
   agentId: string,
@@ -344,37 +337,6 @@ export function registerClientVoiceConsultRun(params: {
     });
   }
   ensureToolEffectSubscription();
-}
-
-/** Attach only to an already validated run/scope; reassignments discard this authority. */
-export function bindClientVoiceNativeAuthority(params: {
-  agentId: string;
-  sessionKey: string;
-  voiceSessionId: string;
-  runId: string;
-  isOwnerCurrent: () => boolean;
-}): void {
-  const binding = voiceSessionByRunId.get(params.runId);
-  if (
-    !binding ||
-    binding.agentId !== params.agentId ||
-    binding.sessionKey !== params.sessionKey ||
-    binding.voiceSessionId !== params.voiceSessionId
-  ) {
-    throw new Error("Native voice authority requires the exact registered run binding");
-  }
-  voiceSessionByRunId.set(
-    params.runId,
-    Object.freeze({
-      ...binding,
-      isOwnerCurrent: params.isOwnerCurrent,
-    }),
-  );
-}
-
-/** Return the open voice-call binding for one executing run. */
-export function resolveClientVoiceRunBinding(runId?: string): ClientVoiceRunBinding | undefined {
-  return runId ? voiceSessionByRunId.get(runId) : undefined;
 }
 
 /**

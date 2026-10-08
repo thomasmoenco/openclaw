@@ -1010,21 +1010,6 @@ describe("sessions_send gating", () => {
     expect(requireGatewayRequest().method).toBe("sessions.resolve");
   });
 
-  it("rejects an unconfigured display name before dispatching the Talk followup", async () => {
-    const tool = createMainSessionsSendTool();
-    const result = await tool.execute("talk-followup", {
-      agentId: "hugin",
-      mode: "followup",
-      timeoutSeconds: 0,
-      message: "Kontroller kun Iris-varsler.",
-    });
-    expect(requireDetails(result)).toMatchObject({
-      status: "error",
-      error: 'Agent "hugin" not found. Run openclaw agents list to see configured agents.',
-    });
-    expect(callGatewayMock).not.toHaveBeenCalled();
-  });
-
   it("rejects an unrepresentable agent id before resolving a main session", async () => {
     const tool = createMainSessionsSendTool();
 

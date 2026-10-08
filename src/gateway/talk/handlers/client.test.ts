@@ -674,7 +674,7 @@ describe("talk.client.transcript", () => {
         confirmationId: confirmationId ?? "missing",
         now: 201,
       }),
-    ).toThrow("explicit spoken confirmation");
+    ).toThrow("uttrykkelig muntlig bekreftelse");
   });
 
   it("accepts an idempotent close retry after the first response is lost", async () => {
