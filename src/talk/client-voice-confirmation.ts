@@ -19,7 +19,7 @@ type PendingVoiceConfirmation = {
   fingerprint: string;
   createdAt: number;
   expiresAt: number;
-  blockedCall?: { runId: string; toolCallId: string; toolName: string };
+  blockedCall?: { runId: string; toolCallId: string; toolName: string; toolParams: unknown };
   changed: Deferred;
   utterance?: ClientVoiceConfirmationUtteranceContext;
   utteranceRejected?: true;
@@ -333,6 +333,7 @@ type ClientVoiceToolConfirmationPolicyParams = {
   toolCallId?: string;
   toolParams: unknown;
   isConfirmable?: () => boolean;
+  isOwnerCurrent?: () => boolean;
   now?: number;
 };
 
@@ -346,6 +347,16 @@ function resolveClientVoiceToolConfirmationPolicy(
 ): ClientVoiceToolConfirmationPolicyResult {
   if (!params.agentId || !params.voiceSessionId) {
     return { allowed: true };
+  }
+  // Only the extra voice misfire challenge is skipped. Native auth, sandbox,
+  // approvals, tool restrictions and trusted policies still execute normally.
+  // Resolve again at final consumption so revoked sources cannot inherit an old grant.
+  try {
+    if (params.isOwnerCurrent?.() === true) {
+      return { allowed: true };
+    }
+  } catch {
+    // Missing/stale owner authority retains the voice challenge.
   }
   if (!requiresHighImpactVoiceConfirmation(params.toolName, params.toolParams)) {
     return { allowed: true };
@@ -391,6 +402,7 @@ function resolveClientVoiceToolConfirmationPolicy(
               runId: params.runId,
               toolCallId: params.toolCallId,
               toolName: params.toolName,
+              toolParams: structuredClone(params.toolParams),
             },
           }
         : {}),
@@ -405,10 +417,10 @@ function resolveClientVoiceToolConfirmationPolicy(
     allowed: false,
     reason:
       `VOICE_CONFIRMATION_REQUIRED:${confirmation.confirmationId} ` +
-      `The high-impact voice action "${params.toolName}" was not executed. ` +
+      `Stemmehandlingen "${params.toolName}" ble ikke utført. ` +
       (observation
-        ? 'Ask the user to say "yes" to confirm this action or "no" to cancel it. A later native delegation carries the confirmation; do not add confirmationId to action tool arguments.'
-        : "Ask the user for explicit spoken confirmation, then call openclaw_agent_consult again with this confirmationId."),
+        ? 'Be brukeren si "ja" for å bekrefte handlingen eller "nei" for å avbryte. Neste native delegering bærer bekreftelsen; ikke legg confirmationId i verktøyargumentene.'
+        : "Be om uttrykkelig muntlig bekreftelse, og kall deretter openclaw_agent_consult med denne confirmationId."),
   };
 }
 
@@ -491,9 +503,9 @@ export function observeClientVoiceConfirmationRun(params: {
         observation.get(pending.fingerprint) === pending.confirmationId &&
         pending.expiresAt >= Date.now()
       ) {
-        return 'One pending action has not run. Say "yes" to confirm that action or "no" to cancel it.';
+        return 'Én handling venter og er ikke utført. Si "ja" for å bekrefte handlingen eller "nei" for å avbryte den.';
       }
-      return "An action in that request was not run because its spoken confirmation is no longer current. Make a new request if you still want it.";
+      return "Handlingen ble ikke utført fordi bekreftelsen ikke lenger er gyldig. Be om handlingen på nytt hvis du fortsatt ønsker den.";
     },
     release(): void {
       const current = confirmationScopes.get(scopeKey);
@@ -505,7 +517,7 @@ export function observeClientVoiceConfirmationRun(params: {
   };
 }
 
-const REFUSAL_PATTERN = /\b(no|don't|do not|cancel|stop|never mind)\b/;
+const REFUSAL_PATTERN = /\b(no|don't|do not|cancel|stop|never mind|nei|ikke|avbryt|stopp)\b/;
 
 function normalizeUtterance(text: string): string {
   return (
@@ -525,8 +537,8 @@ function isExplicitAffirmation(text: string): boolean {
   if (REFUSAL_PATTERN.test(normalized)) {
     return false;
   }
-  // English-only phrases are an accepted first version; localized matching is follow-up work.
-  return /^(yes|yes do it|do it|confirm|confirmed|go ahead|proceed|send it|make the change|restart it)$/.test(
+  // Keep affirmative phrases exact; refusal tokens take precedence in either language.
+  return /^(yes|yes do it|do it|confirm|confirmed|go ahead|proceed|send it|make the change|restart it|ja|ja gjør det|ja takk)$/.test(
     normalized,
   );
 }
@@ -580,15 +592,15 @@ export function authorizeClientVoiceConfirmation(params: {
   const state = getPrunedConfirmationScope(scopeKey, now);
   const confirmation = state?.pending;
   if (!confirmation) {
-    throw new Error("voice confirmation is missing, expired, or belongs to another action");
+    throw new Error("stemmebekreftelsen mangler, er utløpt eller tilhører en annen handling");
   }
   // A bare "yes" can only answer the question the model asked last; authorizing an
   // older challenge would let the model swap in a different pending action.
   if (confirmation.confirmationId !== params.confirmationId) {
-    throw new Error("a newer confirmation request supersedes this one; ask again");
+    throw new Error("en nyere bekreftelse har erstattet denne; spør på nytt");
   }
   if (!hasLaterExplicitAffirmation(state)) {
-    throw new Error("explicit spoken confirmation was not found after the action request");
+    throw new Error("uttrykkelig muntlig bekreftelse ble ikke funnet etter forespørselen");
   }
   // Validate only; the challenge and affirmation are consumed at bind time, once the
   // consult run is established. This keeps a failed/lost-response consult retryable

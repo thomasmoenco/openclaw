@@ -96,7 +96,12 @@ export function consumeFinalClientVoiceToolConfirmation(args: {
     toolCallId: args.toolCallId,
     toolName: normalizeToolPolicyName(args.toolName || "tool"),
     toolParams: args.params,
-    ...(voiceRun ? { isConfirmable: () => isClientVoiceSessionConfirmable(voiceRun) } : {}),
+    ...(voiceRun
+      ? {
+          isConfirmable: () => isClientVoiceSessionConfirmable(voiceRun),
+          isOwnerCurrent: voiceRun.isOwnerCurrent,
+        }
+      : {}),
   });
 }
 
@@ -190,7 +195,12 @@ export async function runBeforeToolCallHook(args: {
       toolCallId: args.toolCallId,
       toolName,
       toolParams: normalizedParams,
-      ...(voiceRun ? { isConfirmable: () => isClientVoiceSessionConfirmable(voiceRun) } : {}),
+      ...(voiceRun
+        ? {
+            isConfirmable: () => isClientVoiceSessionConfirmable(voiceRun),
+            isOwnerCurrent: voiceRun.isOwnerCurrent,
+          }
+        : {}),
     });
     if (!voiceConfirmation.allowed) {
       return {

@@ -23,6 +23,7 @@ import {
 } from "../../../talk/client-voice-confirmation.js";
 import {
   appendClientVoiceTranscript,
+  bindClientVoiceNativeAuthority,
   assertClientVoiceSessionOpen,
   closeClientVoiceSession,
   createOrResumeClientVoiceSession,
@@ -166,6 +167,17 @@ export const talkClientHandlers: GatewayRequestHandlers = {
           voiceSessionId,
           runId,
           config: request.context.getRuntimeConfig(),
+        });
+        const authority = resolveTalkAgentConsultAuthority(
+          request.client?.connect?.scopes,
+          request.client,
+        );
+        bindClientVoiceNativeAuthority({
+          agentId,
+          sessionKey: params.sessionKey,
+          voiceSessionId,
+          runId,
+          isOwnerCurrent: () => authority.senderIsOwner && authority.isOwnerCurrent?.() === true,
         });
         if (confirmationGrant) {
           bindAuthorizedClientVoiceConfirmation({ grant: confirmationGrant, runId });

@@ -283,7 +283,7 @@ describe("client voice session", () => {
         confirmationId,
         now: 12,
       }),
-    ).toThrow("voice confirmation is missing");
+    ).toThrow("stemmebekreftelsen mangler");
 
     digestSend.resolve({ status: "sent" });
     await vi.waitFor(() =>

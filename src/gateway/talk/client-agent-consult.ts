@@ -36,6 +36,7 @@ import {
 } from "../../talk/client-voice-confirmation.js";
 import {
   assertClientVoiceSessionOpen,
+  bindClientVoiceNativeAuthority,
   registerClientVoiceConsultRun,
 } from "../../talk/client-voice-session.js";
 import { registerChatAbortController } from "../chat-abort.js";
@@ -350,6 +351,14 @@ export function createTalkClientAgentConsultRunner(params: {
                 config: params.config,
               });
             }
+            bindClientVoiceNativeAuthority({
+              agentId,
+              sessionKey,
+              voiceSessionId,
+              runId,
+              isOwnerCurrent: () =>
+                authority.senderIsOwner && authority.isOwnerCurrent?.() === true,
+            });
             if (source === "native-delegation") {
               confirmationObservation = observeClientVoiceConfirmationRun({
                 agentId,

@@ -76,6 +76,73 @@ describe("client voice confirmation", () => {
     vi.useRealTimers();
   });
 
+  it.each(["ja", "Ja.", "ja, gjør det", "JA!", "ja takk"])(
+    "accepts exact Norwegian confirmation %j for the blocked followup only",
+    (text) => {
+      const toolParams = {
+        agentId: "hugin",
+        mode: "followup",
+        timeoutSeconds: 0,
+        message: "Kontroller kun Iris-varsler.",
+      };
+      const confirmationId = block({
+        voiceSessionId: "voice-no",
+        runId: "original",
+        toolName: "sessions_send",
+        toolParams,
+        now: 100,
+      });
+      noteClientVoiceConfirmationUtterance({ voiceSessionId: "voice-no", text, timestamp: 101 });
+      const grant = authorizeClientVoiceConfirmation({
+        voiceSessionId: "voice-no",
+        confirmationId,
+        now: 102,
+      });
+      expect(bindAuthorizedClientVoiceConfirmation({ grant, runId: "retry", now: 103 })).toBe(true);
+      const call = {
+        voiceSessionId: "voice-no",
+        runId: "retry",
+        toolName: "sessions_send",
+        toolParams,
+        now: 104,
+      };
+      expect(consumeClientVoiceToolConfirmationPolicy(call).allowed).toBe(true);
+      expect(consumeClientVoiceToolConfirmationPolicy(call).allowed).toBe(false);
+      // This proves gate behavior, not destination validity or child execution safety.
+    },
+  );
+
+  it.each(["nei", "Nei.", "avbryt", "stopp", "ikke gjør det", "ja, nei", "ja, ikke gjør det"])(
+    "Norwegian refusal %j clears the challenge, not merely the affirmation",
+    (text) => {
+      const confirmationId = block({ voiceSessionId: "voice-no", now: 100 });
+      noteClientVoiceConfirmationUtterance({ voiceSessionId: "voice-no", text, timestamp: 101 });
+      expect(snapshotClientVoiceConfirmationStateForTest().pendingChallenges).toBe(0);
+      expect(() =>
+        authorizeClientVoiceConfirmation({ voiceSessionId: "voice-no", confirmationId, now: 102 }),
+      ).toThrow("mangler, er utløpt eller tilhører en annen handling");
+    },
+  );
+
+  it.each([
+    "kanskje",
+    "ja hvis det er trygt",
+    "hun sa ja",
+    "ja og send en annen melding",
+    "javel",
+    "yes nei",
+  ])("ambiguous or quoted speech %j cannot authorize", (text) => {
+    block({ voiceSessionId: "voice-no", now: 100 });
+    noteClientVoiceConfirmationUtterance({ voiceSessionId: "voice-no", text, timestamp: 101 });
+    expect(
+      authorizeObservedClientVoiceConfirmation({
+        agentId: "main",
+        voiceSessionId: "voice-no",
+        now: 102,
+      }),
+    ).toBeUndefined();
+  });
+
   it("keeps observed confirmation bound to the exact agent and call", () => {
     block({ voiceSessionId: "voice-1", runId: "original", now: 100 });
     noteClientVoiceConfirmationUtterance({
@@ -150,13 +217,13 @@ describe("client voice confirmation", () => {
       runId: "read-only",
     });
     block({ voiceSessionId: "voice-1", runId: "blocked" });
-    expect(blocked.readReply()).toContain('Say "yes"');
+    expect(blocked.readReply()).toContain('Si "ja"');
     expect(unrelated.readReply()).toBeUndefined();
     deactivateClientVoiceConfirmationSession("main", "voice-1", ["blocked"]);
-    expect(blocked.readReply()).toContain("new request");
+    expect(blocked.readReply()).toContain("på nytt");
     releaseClientVoiceConfirmationRun("main", "voice-1", "blocked");
     expect(snapshotClientVoiceConfirmationStateForTest().scopeOwners).toBe(0);
-    expect(blocked.readReply()).toContain("new request");
+    expect(blocked.readReply()).toContain("på nytt");
     expect(unrelated.readReply()).toBeUndefined();
   });
 
@@ -330,7 +397,7 @@ describe("client voice confirmation", () => {
     // After binding the run, the challenge is consumed and cannot re-authorize.
     expect(() =>
       authorizeClientVoiceConfirmation({ voiceSessionId: "voice-1", confirmationId, now: 104 }),
-    ).toThrow("missing, expired, or belongs to another action");
+    ).toThrow("mangler, er utløpt eller tilhører en annen handling");
   });
 
   it.each(["supersession", "refusal", "close", "expiry"] as const)(
@@ -529,7 +596,7 @@ describe("client voice confirmation", () => {
         confirmationId,
         now: 121_001,
       }),
-    ).toThrow("missing, expired");
+    ).toThrow("mangler, er utløpt");
   });
 
   it.each(["no", "don't do it", "don’t do it", "do not proceed", "cancel"])(
@@ -548,7 +615,7 @@ describe("client voice confirmation", () => {
           confirmationId,
           now: 102,
         }),
-      ).toThrow("missing, expired, or belongs to another action");
+      ).toThrow("mangler, er utløpt eller tilhører en annen handling");
     },
   );
 
@@ -630,7 +697,7 @@ describe("client voice confirmation", () => {
         confirmationId: first,
         now: 102,
       }),
-    ).toThrow("newer confirmation request supersedes");
+    ).toThrow("nyere bekreftelse har erstattet");
     // Binding the newer grant consumes the shared affirmation and its challenge.
     const grant = authorizeClientVoiceConfirmation({
       voiceSessionId: "voice-1",
@@ -644,7 +711,7 @@ describe("client voice confirmation", () => {
         confirmationId: first,
         now: 103,
       }),
-    ).toThrow("missing, expired");
+    ).toThrow("mangler, er utløpt");
   });
 
   it("binds an approved fingerprint to its follow-up run", () => {
@@ -715,7 +782,7 @@ describe("client voice confirmation", () => {
         confirmationId: olderId,
         now: 112,
       }),
-    ).toThrow("newer confirmation request supersedes");
+    ).toThrow("nyere bekreftelse har erstattet");
     expect(
       authorizeClientVoiceConfirmation({
         voiceSessionId: "voice-1",
@@ -749,7 +816,7 @@ describe("client voice confirmation", () => {
         confirmationId,
         now: 103,
       }),
-    ).toThrow("missing, expired, or belongs to another action");
+    ).toThrow("mangler, er utløpt eller tilhører en annen handling");
   });
 
   it("keeps a live run's grant across call close and releases it on run completion", () => {
